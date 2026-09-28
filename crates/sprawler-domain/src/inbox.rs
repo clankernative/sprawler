@@ -96,7 +96,7 @@ pub fn build_inbox(atlas: &Value) -> Vec<Value> {
                 None => per.push((k.to_string(), 1)),
             }
         }
-        per.sort_by(|a, b| b.1.cmp(&a.1));
+        per.sort_by_key(|x| std::cmp::Reverse(x.1));
         let (title, why) = match (vs[0].get("title").and_then(Value::as_str), RULES.iter().find(|r| r.0 == rule)) {
             (Some(t), _) => (t.to_string(), s(vs[0], "why").to_string()),
             (None, Some((_, t, w))) => (t.to_string(), w.to_string()),

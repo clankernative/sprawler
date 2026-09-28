@@ -296,7 +296,7 @@ pub fn scan(p: &Obj) -> Result<Scan, String> {
             ph["app"].as_str().unwrap_or("")
         ));
     }
-    externals.sort_by(|a, b| b.1.cmp(&a.1));
+    externals.sort_by_key(|x| std::cmp::Reverse(x.1));
     externals.truncate(40);
 
     let edges_out: Vec<Value> = edges

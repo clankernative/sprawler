@@ -1408,7 +1408,7 @@ fn profile_explain(t: &Target, file: Option<&str>, as_json: bool) -> u8 {
             },
         }
     }
-    by_rule.sort_by(|a, b| b.1.cmp(&a.1));
+    by_rule.sort_by_key(|x| std::cmp::Reverse(x.1));
     // a fallback: a `dir/**` glob with more specific entries under the same folder. Whatever it still
     // places was not placed on purpose — that is where misplaced files hide.
     let globs: Vec<String> = by_rule.iter().map(|x| x.0.clone()).collect();
@@ -1422,7 +1422,7 @@ fn profile_explain(t: &Target, file: Option<&str>, as_json: bool) -> u8 {
             None => fired.push((r, 1)),
         }
     }
-    fired.sort_by(|a, b| b.1.cmp(&a.1));
+    fired.sort_by_key(|x| std::cmp::Reverse(x.1));
     if as_json {
         let entries: Vec<Value> = by_rule.iter().map(|(g, n, l)| json!({"glob": g, "files": n, "layers": l, "catchAll": catch_all(g, *n)})).collect();
         println!(

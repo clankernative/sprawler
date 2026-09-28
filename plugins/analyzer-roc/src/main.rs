@@ -122,7 +122,7 @@ impl Counts {
     }
     fn most_common(&self) -> Vec<(String, u64)> {
         let mut v = self.0.clone();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
         v
     }
     fn total(&self) -> u64 {
