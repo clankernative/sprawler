@@ -72,19 +72,17 @@ fn sync_mirror(root: &Path, mirror: &Path, files: &[String]) -> Result<(), Strin
     let want: HashSet<&str> = files.iter().map(String::as_str).collect();
     for rel in files {
         let (src, dst) = (root.join(rel), mirror.join(rel));
-        let s = std::fs::metadata(&src).map_err(|e| format!("{rel}: {e}"))?;
-        if let Ok(d) = std::fs::metadata(&dst) {
-            if d.len() == s.len() && d.modified().ok() == s.modified().ok() {
-                continue;
-            }
+        let raw = std::fs::read(&src).map_err(|e| format!("{rel}: {e}"))?;
+        // test-only code (`#[cfg(test)]` items and modules) is blanked, same length and lines, so
+        // Graphify only links production code and its line numbers still match the real file
+        let body = if rel.ends_with(".rs") { native::sanitize(&String::from_utf8_lossy(&raw)).into_bytes() } else { raw };
+        if std::fs::read(&dst).ok().as_deref() == Some(body.as_slice()) {
+            continue;
         }
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::copy(&src, &dst).map_err(|e| format!("{rel}: {e}"))?;
-        if let (Ok(t), Ok(f)) = (s.modified(), std::fs::File::options().write(true).open(&dst)) {
-            let _ = f.set_modified(t);
-        }
+        std::fs::write(&dst, &body).map_err(|e| format!("{rel}: {e}"))?;
     }
     // drop files no longer claimed (graphify's own output folder is kept)
     let mut stack = vec![mirror.to_path_buf()];
@@ -218,6 +216,13 @@ fn analyze(req: &Value) -> Result<Value, String> {
     let mut stats = json!({"nodes": 0, "links": 0});
     let mut impossible = 0u64;
 
+    // native module resolution: follow each crate's `mod` tree and resolve `use` / paths like the compiler.
+    // First, because it also finds test-only code, which Graphify must not count either.
+    let nat = native::analyze(&root, &files);
+    let in_test = |f: &str, line: Option<u64>| {
+        nat.test_only.contains(f) || line.is_some_and(|l| nat.test_lines.get(f).is_some_and(|r| r.iter().any(|(a, b)| *a <= l && l <= *b)))
+    };
+    let mut test_dropped = 0u64;
     let graph = if rs.is_empty() {
         None
     } else {
@@ -312,6 +317,10 @@ fn analyze(req: &Value) -> Result<Value, String> {
             if s == o {
                 continue;
             }
+            if in_test(s, loc_line(e.get("source_location"))) {
+                test_dropped += 1; // from test-only code: not a production dependency
+                continue;
+            }
             let (ca, cb) = (crate_of(s), crate_of(o));
             let linked = matches!((&ca, &cb), (Some(x), Some(y)) if dep_dirs.contains(&(x.clone(), y.clone())));
             if (ca != cb && !linked) || (tests.contains(o) && !tests.contains(s)) {
@@ -322,16 +331,16 @@ fn analyze(req: &Value) -> Result<Value, String> {
             edges.add(s, o, rel_t, loc_line(e.get("source_location")), &known);
         }
         stats["impossible"] = json!(impossible);
+        stats["testDropped"] = json!(test_dropped);
         if impossible > 0 {
             warnings.push(format!("dropped {impossible} cross-crate Rust refs with no Cargo dependency (resolver name collisions)"));
         }
     }
 
     // native module resolution: follow each crate's `mod` tree and resolve `use` / paths like the compiler
-    let nat = native::analyze(&root, &files);
     let mut native_links = 0u64;
     for l in &nat.links {
-        if tests.contains(&l.target) && !tests.contains(&l.source) {
+        if (tests.contains(&l.target) || nat.test_only.contains(&l.target)) && !tests.contains(&l.source) {
             continue; // production → test-only code is never a real dependency
         }
         edges.add(&l.source, &l.target, l.relation, Some(l.line), &known);
@@ -355,8 +364,8 @@ fn analyze(req: &Value) -> Result<Value, String> {
             head.join(", ")
         ));
     }
-    stats["native"] =
-        json!({"links": native_links, "orphans": nat.orphans.len(), "unresolvedMods": nat.unresolved_mods.len(), "unresolvedPaths": nat.unresolved});
+    stats["native"] = json!({"links": native_links, "orphans": nat.orphans.len(), "unresolvedMods": nat.unresolved_mods.len(), "unresolvedPaths": nat.unresolved,
+              "testOnlyFiles": nat.test_only.len(), "testRegions": nat.test_lines.values().map(Vec::len).sum::<usize>(), "testRefsSkipped": nat.test_refs});
 
     let crates = crate_names(&root, &cargo);
     let modules: Vec<Value> = rs
@@ -413,5 +422,71 @@ fn main() -> ExitCode {
             eprintln!("sprawler-analyzer-rust: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::native::tests::{test_fixture, FIXTURE_FILES};
+
+    /// A stand-in Graphify: links every file mentioning `Local` / `Other` / `Helper` to that type's
+    /// file, at the line it appears. Any test-only code that reaches it would become an edge.
+    const FAKE_GRAPHIFY: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+m = sys.argv[2]
+files = []
+for d, dn, fn in os.walk(m):
+    dn[:] = [x for x in dn if x != "graphify-out"]
+    files += [os.path.relpath(os.path.join(d, f), m) for f in fn if f.endswith(".rs")]
+nodes = [{"id": f, "source_file": f, "label": os.path.basename(f)} for f in files]
+links = []
+for f in files:
+    for n, line in enumerate(open(os.path.join(m, f)).read().split("\n"), 1):
+        for name, t in (("Local", "src/local.rs"), ("Other", "src/other.rs"), ("Helper", "src/helper.rs")):
+            if name in line and f != t:
+                links.append({"source": f, "target": t, "relation": "references", "source_file": f, "source_location": "L%d" % n, "confidence_score": 1.0})
+os.makedirs(os.path.join(m, "graphify-out"), exist_ok=True)
+json.dump({"nodes": nodes, "links": links}, open(os.path.join(m, "graphify-out", "graph.json"), "w"))
+"#;
+
+    fn edges(out: &Value) -> Vec<(String, String, u64)> {
+        let s = |e: &Value, k: &str| e[k].as_str().unwrap_or("").to_string();
+        out["edges"].as_array().unwrap().iter().map(|e| (s(e, "source"), s(e, "target"), e["line"].as_u64().unwrap_or(0))).collect()
+    }
+
+    #[test]
+    fn test_only_code_is_excluded_with_and_without_graphify() {
+        if which("python3").is_none() {
+            eprintln!("skipped: needs python3 for the fake graphify");
+            return;
+        }
+        let d = test_fixture();
+        let cache = d.join("cache");
+        let fake = d.join("fake-graphify");
+        std::fs::write(&fake, FAKE_GRAPHIFY).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let req = json!({"protocol": PROTOCOL, "root": d.to_string_lossy(), "files": FIXTURE_FILES, "tests": [],
+                         "cache_dir": cache.to_string_lossy(), "options": {}});
+        for with_graphify in [true, false] {
+            // the only test that sets this variable, so nothing races on it
+            std::env::set_var("SPRAWLER_GRAPHIFY", if with_graphify { fake.to_string_lossy().into_owned() } else { "sprawler-no-graphify".into() });
+            let out = analyze(&req).unwrap();
+            let e = edges(&out);
+            assert!(e.contains(&("src/app.rs".into(), "src/local.rs".into(), 1)), "graphify={with_graphify}: {e:?}");
+            assert!(!e.iter().any(|(a, b, _)| a == "src/app.rs" && b != "src/local.rs"), "graphify={with_graphify}: {e:?}");
+            assert!(!e.iter().any(|(a, _, _)| a == "src/tests.rs"), "graphify={with_graphify}: {e:?}");
+            if with_graphify {
+                assert!(out["stats"]["links"].as_u64().unwrap() > 0, "the fake graphify ran: {}", out["stats"]);
+                assert!(out["stats"]["testDropped"].as_u64().unwrap() >= 1, "tests.rs -> other.rs dropped: {}", out["stats"]);
+                let orig = std::fs::read_to_string(d.join("src/app.rs")).unwrap();
+                let mirrored = std::fs::read_to_string(cache.join("mirror/src/app.rs")).unwrap();
+                assert_eq!(orig.len(), mirrored.len());
+                assert!(mirrored.starts_with("use crate::local::Local;") && !mirrored.contains("Other") && !mirrored.contains("Helper"));
+            }
+        }
+        std::env::remove_var("SPRAWLER_GRAPHIFY");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
