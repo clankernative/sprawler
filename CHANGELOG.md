@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- **Rust analyzer:** code under `#[cfg(test)]` (inline test modules, `#[cfg(test)] use`, files
+  declared by `#[cfg(test)] mod x;`) no longer produces production dependencies, with or without
+  Graphify. Production edges in the same file keep their line numbers. If you use
+  `check --baseline`, removed findings show as "fixed"; rerun `sprawler baseline .` to refresh it.
+- **Release:** an Intel Mac (`x86_64-apple-darwin`) archive again; only version tags (`v1.2.3`)
+  trigger a release, so moving the `v0.3` tag doesn't.
+
 ## 0.3.0 — first public release
 
 - **Core:** one `sprawler` binary with the 3D map built in. Scans a workspace, judges every

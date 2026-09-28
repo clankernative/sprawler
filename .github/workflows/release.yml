@@ -1,9 +1,9 @@
 name: release
-# Push a tag like v0.3.0: creates the GitHub release, then attaches one archive per platform
+# Push a version tag like v0.3.1 (not the moving v0.3 tag): creates the GitHub release, then attaches one archive per platform
 # (sprawler + the Rust-built analyzer plugins). install.sh and `sprawler plugin add` download these.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: write
@@ -26,7 +26,7 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
-          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }   # cross-compiled on Apple Silicon
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
