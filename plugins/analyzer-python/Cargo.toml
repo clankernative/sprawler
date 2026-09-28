@@ -1,0 +1,17 @@
+[package]
+name = "sprawler-analyzer-python"
+description = "Sprawler analyzer plugin for Python: absolute and relative imports resolved against package roots."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sprawler-analyzer-python"
+path = "src/main.rs"
+
+[dependencies]
+sprawler-analyzer-kit = { path = "../analyzer-kit" }
+serde_json.workspace = true
+regex.workspace = true

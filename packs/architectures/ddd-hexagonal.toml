@@ -1,0 +1,117 @@
+# Architecture pack: DDD + hexagonal (ports and adapters). Language-neutral policy.
+#
+#   core         domain model and rules — pure, depends on nothing else
+#   port         interfaces the application needs (repositories, gateways, clocks, …)
+#   application  use cases: orchestrate the domain through ports
+#   driving      adapters that call in (HTTP, CLI, jobs, UI)
+#   driven       adapters that implement ports (databases, queues, external APIs)
+#   root         composition root: wires adapters to ports
+#
+# Map your folders to these layers in your profile's [[map]]. Add `cqrs` and/or
+# `vertical-slices` to `extends` for those patterns.
+
+# ── layers ──────────────────────────────────────────────────────────────────
+[layers.core]
+label = "Domain core"
+ring = 0
+shape = "icosa"
+color = "#ffd166"
+[layers.port]
+label = "Port"
+ring = 1
+shape = "octa"
+color = "#4cc9ff"
+[layers.application]
+label = "Use case"
+ring = 2
+shape = "dodeca"
+color = "#06d6a0"
+[layers.driving]
+label = "Driving adapter"
+ring = 3
+side = "west"
+shape = "cone"
+color = "#f78c6c"
+[layers.driven]
+label = "Driven adapter"
+ring = 3
+side = "east"
+shape = "box"
+color = "#ff9f1c"
+[layers.root]
+label = "Composition root"
+ring = 3
+side = "north"
+shape = "dodeca"
+color = "#ffffff"
+[layers.generated]
+label = "Generated code"
+ring = 1
+shape = "box"
+color = "#7f8ea3"
+[layers.test]
+label = "Tests"
+ring = 4
+side = "south"
+shape = "tetra"
+color = "#7f8ea3"
+test = true
+
+# ── dependencies point inward ───────────────────────────────────────────────
+[allow]
+core = ["core"]
+port = ["port", "core"]
+application = ["application", "port", "core"]
+driving = ["driving", "application", "port", "core"]
+driven = ["driven", "port", "core"]
+root = ["*"]
+generated = ["*"]
+test = ["*"]
+
+[breach_severity]
+core = "critical"
+port = "major"
+default = "major"
+
+# ── rules (first match wins) ────────────────────────────────────────────────
+[[rules]]
+id = "effect-in-core"
+title = "Domain core touches effects"
+why = "The core should be pure business rules. Effects belong in the use cases that call it."
+fix = "Keep the domain pure: move the effectful call into the use case that uses this domain code, and pass plain values into the domain function instead."
+from_layer = "core"
+to_layer = ["port", "driven", "driving", "application", "generated"]
+severity = "critical"
+message = "Domain core touches an effect port — the core must stay pure"
+
+[[rules]]
+id = "port-bypass"
+title = "A use case calls a driven adapter without a port"
+why = "The use case now depends on one concrete implementation. Put a port in between and let the composition root wire the adapter, so the core stays testable and swappable."
+fix = "The use case calls a driven adapter directly. Depend on a port (an interface the use case owns) and let the composition root wire the adapter. If the target does no I/O (no files, network, database or processes), it is probably in the wrong layer instead: run `sprawler profile explain --file <target>` and give it a more specific [[map]] entry."
+from_layer = "application"
+to_layer = "driven"
+same_ctx = true
+severity = "major"
+message = "Use case calls a driven adapter directly — depend on a port, let the root wire the adapter"
+
+# ── achievements ────────────────────────────────────────────────────────────
+[[achievements]]
+id = "pure-core"
+title = "PURE CORE"
+desc = "No domain core module depends outward"
+clean_layers = ["core"]
+xp = 500
+
+# ── views ───────────────────────────────────────────────────────────────────
+[views.interfaces]
+label = "Ports"
+layers = ["port"]
+implementer_layers = ["driven"]
+
+[views.use_cases]
+label = "Use cases"
+entry = ["driving"]
+through = ["application", "core"]
+same_context = true
+depth = 3

@@ -1,0 +1,221 @@
+# Sprawler rules — generic .NET / C# starting point.
+#
+# The C# adapter supplies FACTS per file: `project` (owning .csproj), `kind` (web | worker | exe |
+# apphost | library | test) and `role` (endpoint, service, persistence, entity, …, with evidence).
+# This file decides what those facts MEAN. Copy it into your own profile (`extends = "dotnet"`) and
+# change tiers, layers and rules to match what your team actually wants to enforce.
+#
+# Map values starting with '@' come from the adapter: ctx = "@project", layer = "@role" (via [roles]).
+# `when` filters a map entry on facts, with globs: when = { project = "*.Contracts" }.
+
+kind = "generic"
+extensions = [".cs"]
+exclude = ["**/bin/**", "**/obj/**", "**/node_modules/**", "**/.git/**"]
+context_label = "PROJECTS"
+
+[scoring]
+# policy = only team rules · structure = only observed structure · combined = the worse of the two
+mode = "combined"
+label = "ARCHITECTURE HEALTH"
+min_confidence = 0.6     # below this, the grade is withheld: the map can't back it up
+boundary = true          # score each project→project pair once, so in-project volume can't hide coupling
+
+# ── tiers ───────────────────────────────────────────────────────────────────
+[[tiers]]
+id = "library"
+label = "LIBRARIES"
+blurb = "class libraries"
+color = "#4cc9ff"
+depends = []
+cross = "allow"
+
+[[tiers]]
+id = "host"
+label = "HOSTS"
+blurb = "runnable apps: web, worker, exe"
+color = "#ff9f1c"
+depends = ["library"]
+cross = "allow"
+
+[[tiers]]
+id = "test"
+label = "TESTS"
+blurb = "test projects"
+color = "#7f8ea3"
+depends = ["library", "host"]
+cross = "allow"
+
+# ── layers: one per inferred role ───────────────────────────────────────────
+[layers.project]
+label = "Project file"
+ring = 0
+shape = "dodeca"
+color = "#ffffff"
+[layers.entity]
+label = "Entity (DbSet)"
+ring = 0
+shape = "icosa"
+color = "#ffd166"
+[layers.model]
+label = "Model / enum"
+ring = 0
+shape = "sphere"
+color = "#e9c46a"
+[layers.abstraction]
+label = "Interface"
+ring = 1
+shape = "octa"
+color = "#4cc9ff"
+[layers.contract]
+label = "Contract / DTO"
+ring = 1
+shape = "tetra"
+color = "#90e0ef"
+[layers.config]
+label = "Options / settings"
+ring = 1
+shape = "tetra"
+color = "#8892b0"
+[layers.util]
+label = "Static helper"
+ring = 1
+shape = "sphere"
+color = "#9aa5b1"
+[layers.service]
+label = "Service / handler"
+ring = 2
+shape = "box"
+color = "#06d6a0"
+[layers.persistence]
+label = "Persistence (EF / repo)"
+ring = 3
+side = "east"
+shape = "box"
+color = "#ff9f1c"
+[layers.integration]
+label = "External client"
+ring = 3
+side = "east"
+shape = "cone"
+color = "#f78c6c"
+[layers.endpoint]
+label = "Endpoint / controller"
+ring = 3
+side = "west"
+shape = "cone"
+color = "#ff6b6b"
+[layers.ui]
+label = "UI component"
+ring = 3
+side = "west"
+shape = "sphere"
+color = "#c792ea"
+[layers.worker]
+label = "Worker / consumer"
+ring = 3
+side = "west"
+shape = "cone"
+color = "#b388ff"
+[layers.composition]
+label = "Composition / startup"
+ring = 3
+side = "north"
+shape = "dodeca"
+color = "#ffffff"
+[layers.migration]
+label = "EF migration"
+ring = 4
+side = "south"
+shape = "tetra"
+color = "#5b6b8a"
+generated = true
+[layers.test]
+label = "Test"
+ring = 4
+side = "south"
+shape = "tetra"
+color = "#7f8ea3"
+test = true
+[layers.loose]
+label = "Unclassified C#"
+ring = 2
+shape = "sphere"
+color = "#5c6773"
+
+# adapter role → layer (identity unless listed)
+[roles]
+code = "loose"
+
+[allow]
+"*" = ["*"]
+
+[breach_severity]
+default = "major"
+
+# ── rules: loose defaults most .NET teams agree with. Each says WHY. ─────────
+[[rules]]
+id = "inner-knows-edge"
+from_layer = ["entity", "model", "contract", "abstraction"]
+to_layer = ["endpoint", "ui", "worker", "composition"]
+severity = "major"
+message = "A model / contract / interface depends on an endpoint, UI, worker or startup type"
+why = "Inner types are used by the edges, not the other way round. When they know about controllers or startup code, every change at the edge ripples inward."
+
+[[rules]]
+id = "service-knows-endpoint"
+from_layer = ["service", "persistence", "integration"]
+to_layer = ["endpoint", "ui"]
+severity = "major"
+message = "Service or infrastructure code depends on a controller / UI type"
+why = "Controllers call services. A service that reaches back into a controller can't be reused from a worker, test or another endpoint."
+
+[[rules]]
+id = "entity-does-io"
+from_layer = ["entity", "model"]
+to_layer = ["persistence", "integration"]
+severity = "minor"
+message = "An entity or model depends on persistence or an external client"
+why = "Business data that performs I/O is hard to test and ties the model to one database or vendor."
+
+[[rules]]
+id = "endpoint-to-db"
+from_layer = ["endpoint"]
+to_layer = ["persistence"]
+severity = "minor"
+message = "A controller / endpoint uses the database directly"
+why = "Common in .NET, but it spreads query logic across controllers. Put it behind a service when the same data is used in more than one place."
+
+# ── map: by project kind (first match wins; profiles prepend their own) ─────
+[[map]]
+glob = "**"
+when = { kind = "test" }
+tier = "test"
+ctx = "@project"
+layer = "@role"
+
+[[map]]
+glob = "**"
+when = { kind = ["web", "worker", "exe", "apphost"] }
+tier = "host"
+ctx = "@project"
+layer = "@role"
+
+[[map]]
+glob = "**"
+when = { kind = ["library", "loose"] }
+tier = "library"
+ctx = "@project"
+layer = "@role"
+
+# ── views ───────────────────────────────────────────────────────────────────
+# Interfaces and who implements them (Roslyn `implements` links verify; else a name match)
+[views.interfaces]
+layers = ["abstraction"]
+implementer_layers = ["service", "persistence", "integration"]
+
+# From each controller / worker inward: services, persistence, entities, and the interfaces they use
+[views.use_cases]
+entry = ["endpoint", "worker", "ui"]
+through = ["service", "persistence", "integration", "entity", "model", "contract"]
+same_context = false
+depth = 3

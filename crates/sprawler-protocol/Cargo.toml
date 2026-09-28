@@ -1,0 +1,12 @@
+[package]
+name = "sprawler-protocol"
+description = "Types for the sprawler.analyzer/1 plugin protocol (see docs/PROTOCOL.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

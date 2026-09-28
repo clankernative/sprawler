@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sprawler.dev/protocol/analyzer-v1.schema.json",
+  "title": "Sprawler analyzer protocol v1",
+  "description": "Documents exchanged with sprawler-analyzer-<name> executables. See docs/PROTOCOL.md.",
+  "$defs": {
+    "protocol": { "const": "sprawler.analyzer/1" },
+    "relpath": { "type": "string", "minLength": 1, "not": { "pattern": "^/" } },
+    "describe": {
+      "type": "object",
+      "required": ["protocol", "name", "version", "claims", "precision"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "version": { "type": "string" },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "claims": {
+          "type": "object",
+          "properties": {
+            "extensions": { "type": "array", "items": { "type": "string", "pattern": "^\\." } },
+            "files": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "precision": { "enum": ["semantic", "syntactic"] },
+        "facts": { "type": "array", "items": { "type": "string" } },
+        "defaults": { "type": "object", "description": "Profile fragment used when a repo has no profile: tiers, layers, allow, map, exclude, analyzers" },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "check": { "type": "array", "items": { "type": "string" } },
+              "install": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["protocol", "root", "files"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "root": { "type": "string", "pattern": "^/" },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/relpath" } },
+        "options": { "type": "object" },
+        "tests": { "type": "array", "items": { "$ref": "#/$defs/relpath" } },
+        "cache_dir": { "type": "string" }
+      }
+    },
+    "module": {
+      "type": "object",
+      "required": ["id", "lang"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "path": { "oneOf": [{ "$ref": "#/$defs/relpath" }, { "type": "null" }] },
+        "lang": { "type": "string" },
+        "virtual": { "type": "boolean" },
+        "anchor": { "type": "string" },
+        "symbols": {
+          "type": "object",
+          "properties": {
+            "types": { "type": "integer", "minimum": 0 },
+            "functions": { "type": "integer", "minimum": 0 },
+            "methods": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "sample": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [{ "enum": ["type", "fn", "method"] }, { "type": "string" }, { "type": "integer" }],
+            "minItems": 3, "maxItems": 3
+          }
+        },
+        "facts": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "generated": { "type": "boolean" },
+        "resolution": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source", "target", "relations"],
+      "properties": {
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "relations": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "weight": { "type": "integer", "minimum": 1 },
+        "line": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": ["protocol", "modules", "edges"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "modules": { "type": "array", "items": { "$ref": "#/$defs/module" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+        "declared": { "type": "array", "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 } },
+        "unknown": {
+          "type": "object",
+          "properties": {
+            "unresolved": { "type": "integer", "minimum": 0 },
+            "dropped": { "type": "integer", "minimum": 0 },
+            "phantoms": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["module", "name"],
+                "properties": { "module": { "type": "string" }, "name": { "type": "string" }, "note": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "resolution": {
+          "type": "object",
+          "required": ["lang"],
+          "properties": {
+            "lang": { "type": "string" },
+            "resolved": { "type": "integer", "minimum": 0 },
+            "unresolved": { "type": "integer", "minimum": 0 },
+            "unrestored": { "type": "integer", "minimum": 0 },
+            "projects": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "boolean" }
+          }
+        },
+        "externals": { "type": "array", "items": { "type": "array", "prefixItems": [{ "type": "string" }, { "type": "integer" }] } },
+        "stats": { "type": "object" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

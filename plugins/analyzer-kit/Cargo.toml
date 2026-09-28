@@ -1,0 +1,13 @@
+[package]
+name = "sprawler-analyzer-kit"
+description = "Shared helpers for writing Sprawler analyzer plugins in Rust (request/response, edges, symbol counts)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+regex.workspace = true
+sprawler-protocol = { path = "../../crates/sprawler-protocol" }

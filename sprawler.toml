@@ -1,0 +1,252 @@
+# Sprawler checking its own code. These rules are the architecture we claim in docs/PROTOCOL.md and
+# AGENTS.md; `sprawler check . --fail-on minor` on this repo is a release gate. Don't loosen a rule to pass it.
+#
+#   domain    crates/sprawler-domain — pure: facts + policy in, findings out
+#   protocol  crates/sprawler-protocol — the contract every analyzer speaks; plugins/analyzer-kit —
+#             shared helpers for writing analyzers (knows the protocol, never a specific plugin)
+#   adapters  crates/sprawler — driving (cli, serve) → app (atlas) → driven (files, git, plugins)
+#   plugins   plugins/* — facts from code; may use the protocol and nothing else
+#   ui        web/src — talks to the server over /api only (a seam, not an import)
+extends = ["ddd-hexagonal"]
+name = "sprawler"
+title = "SPRAWLER · SELF"
+root = "."
+include = ["crates/**", "plugins/**", "web/src/**"]
+exclude = ["**/target/**", "**/fixtures/**", "**/node_modules/**", "**/bin/**", "**/obj/**", "crates/sprawler/web_dist/**"]
+extensions = [".rs", ".cs", ".js"]
+context_label = "CRATES"
+
+[scoring]
+mode = "combined"
+label = "ARCHITECTURE HEALTH"
+
+# ── tiers ───────────────────────────────────────────────────────────────────
+[[tiers]]
+id = "domain"
+label = "DOMAIN CORE"
+blurb = "pure: facts + policy in, findings out"
+color = "#ffd166"
+depends = []
+cross = "allow"
+
+[[tiers]]
+id = "protocol"
+label = "PLUGIN PROTOCOL"
+blurb = "the contract every analyzer speaks"
+color = "#4cc9ff"
+depends = []
+cross = "allow"
+
+[[tiers]]
+id = "adapters"
+label = "CLI · SERVER · ADAPTERS"
+blurb = "files, git, processes, HTTP"
+color = "#ff9f1c"
+depends = ["domain", "protocol"]
+cross = "allow"
+
+[[tiers]]
+id = "plugins"
+label = "ANALYZER PLUGINS"
+blurb = "facts from code; protocol only"
+color = "#b388ff"
+depends = ["protocol"]
+cross = "deny"          # plugins never know about each other
+
+[[tiers]]
+id = "ui"
+label = "3D UI"
+blurb = "reaches the server through /api only"
+color = "#39ffb0"
+depends = []
+cross = "allow"
+
+# ── layers ──────────────────────────────────────────────────────────────────
+[layers.core]
+label = "Domain logic"
+ring = 0
+shape = "icosa"
+color = "#ffd166"
+[layers.port]
+label = "Protocol contract"
+ring = 0
+shape = "octa"
+color = "#4cc9ff"
+[layers.application]
+label = "Use case (atlas assembly)"
+ring = 1
+shape = "dodeca"
+color = "#06d6a0"
+[layers.driven]
+label = "Driven adapter (files, git, plugins)"
+ring = 2
+side = "east"
+shape = "box"
+color = "#ff9f1c"
+[layers.driving]
+label = "Driving adapter (CLI, HTTP)"
+ring = 2
+side = "west"
+shape = "cone"
+color = "#f78c6c"
+[layers.root]
+label = "Composition root"
+ring = 3
+side = "north"
+shape = "dodeca"
+color = "#ffffff"
+[layers.plugin]
+label = "Analyzer plugin"
+ring = 1
+shape = "box"
+color = "#b388ff"
+[layers.ui]
+label = "UI module"
+ring = 1
+shape = "sphere"
+color = "#39ffb0"
+[layers.test]
+label = "Tests"
+ring = 4
+side = "south"
+shape = "tetra"
+color = "#7f8ea3"
+test = true
+
+# ── what each layer may depend on (inside a crate, and across crates) ───────
+[allow]
+core = ["core"]
+port = ["port", "core"]
+driven = ["driven", "core", "port"]
+application = ["application", "core", "port"]
+driving = ["driving", "application", "driven", "core", "port"]
+root = ["*"]
+plugin = ["plugin", "port"]
+ui = ["ui"]
+test = ["*"]
+
+# ── path → tier, context, layer (first match wins) ──────────────────────────
+[[map]]
+glob = "crates/sprawler-domain/tests/**"
+tier = "domain"
+ctx = "sprawler-domain"
+layer = "test"
+[[map]]
+glob = "crates/sprawler-domain/**"
+tier = "domain"
+ctx = "sprawler-domain"
+layer = "core"
+[[map]]
+glob = "crates/sprawler-protocol/**"
+tier = "protocol"
+ctx = "sprawler-protocol"
+layer = "port"
+[[map]]
+glob = "crates/sprawler/tests/**"
+tier = "adapters"
+ctx = "sprawler"
+layer = "test"
+[[map]]
+glob = "crates/sprawler/src/main.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "root"
+[[map]]
+glob = "crates/sprawler/src/cli.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "driving"
+[[map]]
+glob = "crates/sprawler/src/serve.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "driving"
+[[map]]
+glob = "crates/sprawler/src/atlas.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/ports.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "port"
+[[map]]
+glob = "crates/sprawler/src/views.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/seams.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/prompts.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/local.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "driven"
+[[map]]
+glob = "crates/sprawler/**"
+tier = "adapters"
+ctx = "sprawler"
+layer = "driven"
+[[map]]
+glob = "plugins/analyzer-kit/**"
+tier = "protocol"
+ctx = "analyzer-kit"
+layer = "port"
+[[map]]
+glob = "plugins/{ctx}/**"
+tier = "plugins"
+layer = "plugin"
+[[map]]
+glob = "web/src/**"
+tier = "ui"
+ctx = "web"
+layer = "ui"
+
+# ── contract seams: connections that are data, not imports ──────────────────
+# The core runs each plugin with `describe` / `analyze`; each plugin matches on those commands.
+[[seams]]
+id = "plugin-roc"
+label = "Analyzer protocol · core → roc plugin"
+emit = [{ glob = "crates/sprawler/src/plugins.rs", pattern = '\.arg\("([a-z]+)"\)' }]
+handle = [{ file = "plugins/analyzer-roc/src/main.rs", block = '^fn main\(', pattern = '^\s*"([a-z]+)"\s*=>' }]
+
+[[seams]]
+id = "plugin-rust"
+label = "Analyzer protocol · core → rust plugin"
+emit = [{ glob = "crates/sprawler/src/plugins.rs", pattern = '\.arg\("([a-z]+)"\)' }]
+handle = [{ file = "plugins/analyzer-rust/src/main.rs", block = '^fn main\(', pattern = '^\s*"([a-z]+)"\s*=>' }]
+
+[[seams]]
+id = "plugin-csharp"
+label = "Analyzer protocol · core → C# plugin"
+emit = [{ glob = "crates/sprawler/src/plugins.rs", pattern = '\.arg\("([a-z]+)"\)' }]
+handle = [{ file = "plugins/analyzer-csharp/Program.cs", block = 'static int Main\(', pattern = 'case\s+"([a-z]+)"\s*:' }]
+
+# The UI calls /api routes; serve.rs matches on them. An unhandled route fails `sprawler check`.
+[[seams]]
+id = "api"
+label = "HTTP API · web UI → serve.rs routes"
+emit = [{ glob = "web/src/*.js", pattern = 'fetch\(\s*.(/api/[a-z]+)' }]
+handle = [{ file = "crates/sprawler/src/serve.rs", block = '^fn handle\(', pattern = '\(\s*"(?:GET|POST)"\s*,\s*"(/api/[a-z]+)"\s*\)' }]
+
+# ── views ───────────────────────────────────────────────────────────────────
+# Interfaces: the plugin protocol contract, implemented by the plugins (the seams verify it)
+[views.interfaces]
+layers = ["port"]
+implementer_layers = ["plugin"]
+
+# Use cases: from each CLI / HTTP entry point inward through the atlas use case and driven adapters
+[views.use_cases]
+entry = ["driving"]
+through = ["application", "driven", "core"]
+same_context = false
+depth = 3

@@ -1,0 +1,36 @@
+# Add-on pack: CQRS. Use cases split into commands (writes) and queries (reads).
+# Use with `ddd-hexagonal`: extends = ["ddd-hexagonal", "cqrs"]
+
+[layers.command]
+label = "Command"
+ring = 2
+shape = "dodeca"
+color = "#ff6b6b"
+[layers.query]
+label = "Query"
+ring = 2
+shape = "dodeca"
+color = "#4cc9ff"
+
+[allow]
+command = ["command", "application", "port", "core"]
+query = ["query", "application", "port", "core"]
+driving = ["driving", "application", "command", "query", "port", "core"]
+
+[[rules]]
+id = "cqrs-breach"
+title = "Reads import writes"
+why = "Queries should never depend on commands; it breaks read/write separation."
+fix = "Queries must not know about writes. Move the shared type/logic into shared/ or domain/ and import it from both."
+from_layer = "query"
+to_layer = "command"
+same_ctx = true
+severity = "major"
+message = "Query slice imports a command slice — reads must not know about writes"
+
+[[achievements]]
+id = "cqrs"
+title = "CQRS CLEAN"
+desc = "Reads never import writes"
+no_rules = ["cqrs-breach"]
+xp = 250

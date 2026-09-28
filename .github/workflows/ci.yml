@@ -1,0 +1,94 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # the Rust plugin resolves modules natively; skip Graphify (symbol counts only) so CI needs no network tools
+  SPRAWLER_GRAPHIFY: sprawler-no-graphify
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows support is new and not yet proven on a real run; report it without blocking
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build core + first-party plugins
+        run: cargo build --workspace
+      - name: Tests
+        run: cargo test --workspace
+      - name: Plugins conform to sprawler.analyzer/1
+        shell: bash
+        run: |
+          S=./target/debug/sprawler
+          $S plugin test ./target/debug/sprawler-analyzer-rust --dir tests/fixtures/rust-workspace
+          $S plugin test ./target/debug/sprawler-analyzer-roc --dir tests/fixtures/roc-packages
+          $S plugin test ./target/debug/sprawler-analyzer-typescript --dir tests/fixtures/ts-layered
+          $S plugin test ./target/debug/sprawler-analyzer-python --dir tests/fixtures/python-layered
+          $S plugin test ./target/debug/sprawler-analyzer-go --dir tests/fixtures/go-layered
+      - name: Sprawler passes its own architecture check
+        shell: bash
+        run: ./target/debug/sprawler check . --fail-on minor
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
+  ui-fresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Committed UI matches web/src
+        run: |
+          cd web && npm ci && npm run build
+          git diff --exit-code -- ../crates/sprawler/web_dist || { echo "crates/sprawler/web_dist is stale: run 'cd web && npm run build' and commit"; exit 1; }
+
+  # On main: publish the Sprawler badge (shields.io endpoint JSON) to the `badges` branch
+  badge:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace
+      - name: Write the badge
+        run: ./target/debug/sprawler badge . -o "$RUNNER_TEMP/sprawler.json"
+      - name: Push it to the badges branch
+        run: |
+          cd "$RUNNER_TEMP" && mkdir badges && cd badges
+          git init -q -b badges
+          cp "$RUNNER_TEMP/sprawler.json" .
+          git add sprawler.json
+          git -c user.name="github-actions" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Sprawler badge for $GITHUB_SHA"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" badges

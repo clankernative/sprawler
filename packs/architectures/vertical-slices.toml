@@ -1,0 +1,47 @@
+# Add-on pack: vertical slices. Each feature is a slice; slices share code only through `shared`.
+# With `cqrs`, commands and queries are slices too. List `cqrs` before this pack.
+
+[layers.slice]
+label = "Slice"
+ring = 2
+shape = "dodeca"
+color = "#06d6a0"
+[layers.shared]
+label = "Shared"
+ring = 2
+shape = "octa"
+color = "#8892b0"
+
+[allow]
+slice = ["slice", "shared", "application", "port", "core"]
+shared = ["shared", "port", "core"]
+
+[[rules]]
+id = "slice-coupling"
+title = "Slices import sibling slices"
+why = "Vertical slices should change independently. Importing a sibling ties them together; move the common piece to shared/ or domain/."
+fix = "Don't import a sibling slice directly. Extract what both slices need into shared/ (views, errors) or domain/ (rules), then import it from there."
+from_layer = ["slice", "command", "query"]
+to_layer = ["slice", "command", "query"]
+same_ctx = true
+same_slice = false
+severity = "minor"
+message = "Vertical slice imports a sibling slice directly (promote it to shared/)"
+
+[[rules]]
+id = "shared-knows-slice"
+title = "shared/ modules import slice types"
+why = "shared/ is meant to be used by slices, not the reverse. When it imports a slice, changing that slice ripples through everything that uses shared/."
+fix = "shared/ must not depend on a slice's types. Move the type it needs into shared/ or domain/, or move the wiring that needs the slice into the composition root."
+from_layer = "shared"
+to_layer = ["slice", "command", "query"]
+same_ctx = true
+severity = "minor"
+message = "Shared module imports one slice's types — shared/ should not know its slices"
+
+[[achievements]]
+id = "slices"
+title = "CLEAN SLICES"
+desc = "Vertical slices never import siblings"
+no_rules = ["slice-coupling"]
+xp = 150

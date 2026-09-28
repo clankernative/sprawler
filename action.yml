@@ -1,0 +1,69 @@
+name: Sprawler
+description: Check a codebase's architecture with Sprawler; findings appear as annotations on the PR and a job summary.
+branding:
+  icon: map
+  color: green
+
+inputs:
+  path:
+    description: Folder to check (relative to the repository)
+    default: "."
+  fail-on:
+    description: Fail on findings at or above this severity (minor, major, critical, none)
+    default: major
+  baseline:
+    description: A baseline file from `sprawler baseline`; only findings not in it count toward fail-on
+    default: ""
+  plugins:
+    description: Analyzer plugins to install (from the prebuilt release)
+    default: rust roc typescript python go
+  version:
+    description: Sprawler release to install, e.g. 0.3.0 (default latest)
+    default: ""
+  args:
+    description: Extra arguments for `sprawler check`, e.g. --min-score 80
+    default: ""
+
+outputs:
+  score:
+    description: The score (0-100)
+    value: ${{ steps.check.outputs.score }}
+  grade:
+    description: The grade (S, A, B, C, D, F, or ? when withheld)
+    value: ${{ steps.check.outputs.grade }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Sprawler
+      shell: bash
+      env:
+        SPRAWLER_VERSION: ${{ inputs.version }}
+        SPRAWLER_INSTALL: prebuilt
+        SPRAWLER_BIN_DIR: ${{ runner.temp }}/sprawler/bin
+        SPRAWLER_PLUGIN_HOME: ${{ runner.temp }}/sprawler/plugins
+      run: |
+        # prebuilt releases cover Linux and macOS; on Windows build from source instead
+        sh "$GITHUB_ACTION_PATH/install.sh" ${{ inputs.plugins }} > "$RUNNER_TEMP/sprawler-install.log" 2>&1 || { cat "$RUNNER_TEMP/sprawler-install.log"; exit 2; }
+        echo "$SPRAWLER_BIN_DIR" >> "$GITHUB_PATH"
+        echo "SPRAWLER_PLUGIN_HOME=$SPRAWLER_PLUGIN_HOME" >> "$GITHUB_ENV"
+        # the Rust plugin resolves modules natively; skip Graphify (symbol counts) so nothing else is downloaded
+        echo "SPRAWLER_GRAPHIFY=${SPRAWLER_GRAPHIFY:-sprawler-no-graphify}" >> "$GITHUB_ENV"
+
+    - name: Check
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: |
+        baseline=()
+        if [ -n "${{ inputs.baseline }}" ]; then baseline=(--baseline "${{ inputs.baseline }}"); fi
+        set +e
+        sprawler check . --fail-on "${{ inputs.fail-on }}" "${baseline[@]}" --format github ${{ inputs.args }}
+        code=$?
+        set -e
+        sprawler check . --fail-on none --json 2>/dev/null > "$RUNNER_TEMP/sprawler-check.json" || true
+        score=$(jq -r '.score.total // empty' "$RUNNER_TEMP/sprawler-check.json")
+        grade=$(jq -r 'if .score.withheld then "?" else (.score.grade // empty) end' "$RUNNER_TEMP/sprawler-check.json")
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+        echo "grade=$grade" >> "$GITHUB_OUTPUT"
+        exit $code

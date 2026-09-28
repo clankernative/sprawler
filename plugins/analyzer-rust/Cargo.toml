@@ -1,0 +1,18 @@
+[package]
+name = "sprawler-analyzer-rust"
+description = "Sprawler analyzer plugin for Rust: Graphify facts, corrected by the Cargo dependency graph."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sprawler-analyzer-rust"
+path = "src/main.rs"
+
+[dependencies]
+sprawler-protocol = { path = "../../crates/sprawler-protocol" }
+serde_json.workspace = true
+regex.workspace = true
+toml = "0.8"

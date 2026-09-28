@@ -1,0 +1,17 @@
+[package]
+name = "sprawler-analyzer-roc"
+description = "Sprawler analyzer plugin for Roc: imports, package aliases, generated handles, instance bindings."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sprawler-analyzer-roc"
+path = "src/main.rs"
+
+[dependencies]
+sprawler-protocol = { path = "../../crates/sprawler-protocol" }
+serde_json.workspace = true
+regex.workspace = true

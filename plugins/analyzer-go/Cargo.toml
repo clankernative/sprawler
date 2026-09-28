@@ -1,0 +1,17 @@
+[package]
+name = "sprawler-analyzer-go"
+description = "Sprawler analyzer plugin for Go: module and package imports resolved to the files that declare what is used."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sprawler-analyzer-go"
+path = "src/main.rs"
+
+[dependencies]
+sprawler-analyzer-kit = { path = "../analyzer-kit" }
+serde_json.workspace = true
+regex.workspace = true

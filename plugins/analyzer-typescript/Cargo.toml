@@ -1,0 +1,17 @@
+[package]
+name = "sprawler-analyzer-typescript"
+description = "Sprawler analyzer plugin for TypeScript/JavaScript: ES/CommonJS imports, tsconfig paths, workspace packages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sprawler-analyzer-typescript"
+path = "src/main.rs"
+
+[dependencies]
+sprawler-analyzer-kit = { path = "../analyzer-kit" }
+serde_json.workspace = true
+regex.workspace = true

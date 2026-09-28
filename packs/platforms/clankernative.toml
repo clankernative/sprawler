@@ -1,0 +1,464 @@
+# Sprawler rules pack for the Clankernative platform (Roc SDK + Rust host), shared by every workspace:
+# tiers, layers, what may depend on what, and contract seams.
+# Paths use tokens: {platform} = the platform folder, {app} = one app folder (both from the workspace config).
+# {ctx} and {slice} are captures filled in from the matched path.
+
+# General policy comes from the architecture packs; this pack adds the platform's layout,
+# tiers, SDK/host seams and views, and overrides rules where Clankernative is stricter.
+extends = ["ddd-hexagonal", "cqrs", "vertical-slices"]
+
+extensions = [".roc", ".rs"]
+platform_include = ["{platform}/sdk/**", "{platform}/crates/**", "{platform}/ops/**", "{platform}/cli/**"]
+platform_exclude = [
+  "**/target/**", "**/node_modules/**", "**/.toolchains/**",
+  "{platform}/artifacts/**", "{platform}/fixtures/**", "{platform}/examples/**", "{platform}/vendor/**",
+  "{platform}/tools/**", "{platform}/infra/**", "{platform}/cli/fixtures/**",
+]
+
+# Options passed to each analyzer plugin unchanged (docs/PROTOCOL.md `options`)
+[analyzers.rust.options]
+min_confidence = 0.8     # drop Graphify links below this confidence
+
+[analyzers.roc.options]
+package_markers = ["App.roc", "main.roc"]
+default_aliases = { pf = "{platform}/sdk" }
+# Platform-generated typed handles: these never exist on disk.
+generated = ["Data", "Reads", "Commands", "Domains", "Outputs", "Inputs", "Templates", "Assets", "Errors", "Writes", "Selectors"]
+
+# ── tiers (concentric rings, inside → out) ──────────────────────────────────
+[[tiers]]
+id = "app"
+label = "APPLICATIONS"
+blurb = "pure Roc business cores"
+color = "#39ffb0"
+depends = ["sdk"]
+cross = "deny"          # apps never know about each other
+published = []
+
+[[tiers]]
+id = "sdk"
+label = "SDK · PORTS"
+blurb = "the only surface apps may touch"
+color = "#4cc9ff"
+depends = []
+cross = "allow"
+acyclic = false         # one Roc package; folders are organisation, not boundaries
+
+[[tiers]]
+id = "host"
+label = "RUST HOST · ADAPTERS"
+blurb = "effects, storage, transport"
+color = "#ff9f1c"
+depends = []
+cross = "declared"      # cross-crate only along Cargo.toml edges
+
+[[tiers]]
+id = "tooling"
+label = "OPS · CLI"
+blurb = "operator recipes"
+color = "#b388ff"
+depends = ["sdk", "host"]
+cross = "allow"
+
+[[tiers]]
+id = "instance"
+label = "COMPANY INSTANCES"
+blurb = "policy + state bindings"
+color = "#ff4fd8"
+depends = ["app"]
+cross = "allow"
+
+# ── layers (rings inside each context platform) ─────────────────────────────
+[layers.core]
+label = "Domain core"
+ring = 0
+shape = "icosa"
+color = "#ffd166"
+[layers.model]
+label = "Storage model"
+ring = 1
+shape = "box"
+color = "#06d6a0"
+[layers.generated]
+label = "Generated handle"
+ring = 1
+shape = "tetra"
+color = "#5b6b8a"
+generated = true
+[layers.command]
+label = "Command slice"
+ring = 2
+shape = "cone"
+color = "#ff6b6b"
+[layers.query]
+label = "Query slice"
+ring = 2
+shape = "octa"
+color = "#4cc9ff"
+[layers.view]
+label = "Shared view"
+ring = 2
+shape = "sphere"
+color = "#c792ea"
+[layers.driving]
+label = "Driving adapter"
+ring = 3
+side = "west"
+shape = "cone"
+color = "#f78c6c"
+[layers.driven]
+label = "Driven adapter"
+ring = 3
+side = "east"
+shape = "box"
+color = "#ff9f1c"
+[layers.root]
+label = "Composition root"
+ring = 3
+side = "north"
+shape = "dodeca"
+color = "#ffffff"
+[layers.proof]
+label = "Verification proof"
+ring = 3
+side = "south"
+shape = "tetra"
+color = "#a0e7ff"
+[layers.test]
+label = "Test suite"
+ring = 4
+side = "south"
+shape = "tetra"
+color = "#7f8ea3"
+test = true
+[layers.port]
+label = "Port"
+ring = 1
+shape = "octa"
+color = "#4cc9ff"
+[layers.kernel]
+label = "Shared kernel"
+ring = 0
+shape = "icosa"
+color = "#ffd166"
+[layers.internal]
+label = "Runtime internal"
+ring = 0
+shape = "box"
+color = "#8892b0"
+[layers.adapter]
+label = "Host adapter"
+ring = 1
+shape = "box"
+color = "#ff9f1c"
+[layers.tool]
+label = "Tool recipe"
+ring = 1
+shape = "dodeca"
+color = "#b388ff"
+[layers.binding]
+label = "Instance binding"
+ring = 0
+shape = "sphere"
+color = "#ff4fd8"
+[layers.loose]
+label = "Unplaced file"
+ring = 3
+side = "south"
+shape = "sphere"
+color = "#9aa5b1"
+
+# ── what each layer may depend on ('*' = anything) ──────────────────────────
+[allow]
+core = ["core", "kernel"]
+model = ["model", "core", "kernel", "port"]
+command = ["command", "view", "model", "core", "generated", "port", "kernel", "loose", "proof"]
+query = ["query", "view", "model", "core", "generated", "port", "kernel", "loose", "proof"]
+view = ["view", "model", "core", "generated", "port", "kernel"]
+driving = ["driving", "command", "query", "view", "model", "core", "generated", "port", "kernel"]
+driven = ["driven", "port", "kernel", "core", "model"]
+root = ["*"]
+proof = ["proof", "view", "model", "core", "generated", "port", "kernel", "command", "query"]
+test = ["*"]
+generated = ["*"]
+port = ["port", "kernel", "internal"]
+kernel = ["kernel"]
+internal = ["internal", "port", "kernel"]
+adapter = ["adapter", "port", "kernel", "generated"]
+tool = ["*"]
+binding = ["*"]
+loose = ["*"]
+
+[breach_severity]
+core = "critical"
+kernel = "critical"
+port = "major"
+default = "major"
+
+# ── bespoke rules (first match wins; severity "ok" exempts) ─────────────────
+[[rules]]
+id = "effect-in-core"
+title = "Domain core touches effects"
+why = "The core should be pure business rules. Effects belong in commands and queries."
+fix = "Keep the domain pure: move the effectful call into the command/query that uses this domain code, and pass plain values into the domain function instead."
+from_layer = "core"
+to_layer = ["port", "generated", "internal"]
+severity = "critical"
+message = "Domain core touches an effect port — the core must stay pure"
+
+[[rules]]
+id = "runtime-leak"
+title = "Apps reach into SDK runtime internals"
+why = "Only public SDK ports are stable; internals can change under the app."
+fix = "Depend on the public SDK port (platform/sdk/contracts, data, web) instead of runtime internals."
+from_tier = "app"
+to_layer = "internal"
+severity = "critical"
+message = "App reaches into SDK runtime internals instead of a public port"
+
+[[rules]]
+id = "native-host-link"
+title = "App code links the Rust host directly"
+why = "Apps should reach the host only through SDK ports. A direct crate link couples the app to host internals and skips the effect validation the platform relies on."
+fix = "App-owned native code links the host crate directly. Depend on a narrow plugin contract (e.g. a small crate or a platform/sdk contract) instead of the host's internals."
+from_tier = "app"
+to_tier = "host"
+severity = "major"
+message = "App-owned native code links the Rust host crate directly instead of a plugin port"
+
+[[rules]]
+id = "bin-crate-root"
+from_tier = "host"
+from_layer = "adapter"
+to_layer = "root"
+same_ctx = true
+severity = "ok"
+message = "bin-only crate: crate:: resolves to main.rs"
+
+[[rules]]
+id = "port-bypass"
+title = "A use case calls a driven adapter without a port"
+why = "The use case now depends on one concrete implementation. Put a port in between and let App.roc wire the adapter, so the core stays testable and swappable."
+fix = "The use case calls a driven adapter directly. Depend on a port (an SDK contract or an app-level interface) and let the composition root (App.roc) wire the adapter. If the target does no I/O (no files, network, database or processes), it is probably in the wrong layer instead: run `sprawler profile explain --file <target>` and give it a more specific [[map]] entry."
+from_layer = ["command", "query", "view"]
+to_layer = "driven"
+same_ctx = true
+severity = "major"
+message = "Use case calls a driven adapter directly — depend on a port, let the root wire the adapter"
+
+[[rules]]
+id = "shared-knows-proof"
+title = "shared/ depends on verification fixtures"
+why = "Production code shouldn't need test fixtures. Move that wiring into verification/ or App.roc."
+fix = "Production shared code must not depend on verification fixtures. Move that wiring into verification/ or App.roc."
+from_layer = "view"
+to_layer = "proof"
+same_ctx = true
+severity = "minor"
+message = "Shared module depends on verification fixtures"
+
+[[rules]]
+id = "shared-knows-slice"
+title = "shared/ modules import slice types"
+why = "shared/ is meant to be used by slices, not the reverse. When it imports a slice, changing that slice ripples through everything that uses shared/."
+fix = "shared/ must not depend on a slice's types. Move the type it needs into shared/ or domain/, or move the registration/wiring that needs the slice into App.roc."
+from_layer = "view"
+to_layer = ["command", "query"]
+same_ctx = true
+severity = "minor"
+message = "Shared module imports one slice's types — shared/ should not know its slices"
+
+# ── platform paths → (tier, context, layer); first match wins ───────────────
+[[platform_map]]
+glob = "{platform}/sdk/*.roc"
+tier = "sdk"
+ctx = "entry"
+layer = "root"
+[[platform_map]]
+glob = "{platform}/sdk/*"
+tier = "unmapped"
+ctx = "platform"
+layer = "loose"
+[[platform_map]]
+glob = "{platform}/sdk/{ctx}/**"
+tier = "sdk"
+layer_by_ctx = { contracts = "port", data = "port", web = "port", testing = "port", runtime = "internal", domain = "kernel" }
+layer = "port"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/tests/**"
+tier = "host"
+layer = "test"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/src/**/*_tests.rs"
+tier = "host"
+layer = "test"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/src/bin/**"
+tier = "host"
+layer = "root"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/src/main.rs"
+tier = "host"
+layer = "root"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/generated/**"
+tier = "host"
+layer = "generated"
+[[platform_map]]
+glob = "{platform}/crates/{ctx}/**"
+tier = "host"
+layer_by_ctx = { "day2-capabilities" = "port", "day2-sandbox" = "port" }
+layer = "adapter"
+[[platform_map]]
+glob = "{platform}/ops/**"
+tier = "tooling"
+ctx = "ops"
+layer = "tool"
+[[platform_map]]
+glob = "{platform}/cli/**"
+tier = "tooling"
+ctx = "cli"
+layer = "tool"
+# docs, READMEs, fixtures elsewhere in the platform repo are not code on the map
+[[platform_map]]
+glob = "{platform}/**"
+tier = "unmapped"
+ctx = "platform"
+layer = "loose"
+needs_prefix = true
+
+# ── per-app paths (applied to each app folder in the workspace) ─────────────
+[[app_map]]
+glob = "{app}/native/**"
+tier = "app"
+layer = "driven"
+[[app_map]]
+glob = "{app}/App.roc"
+tier = "app"
+layer = "root"
+[[app_map]]
+glob = "{app}/domain/**"
+tier = "app"
+layer = "core"
+[[app_map]]
+glob = "{app}/storage/**"
+tier = "app"
+layer = "model"
+[[app_map]]
+glob = "{app}/commands/{slice}/**"
+tier = "app"
+layer = "command"
+[[app_map]]
+glob = "{app}/queries/{slice}/**"
+tier = "app"
+layer = "query"
+[[app_map]]
+glob = "{app}/shared/**"
+tier = "app"
+layer = "view"
+[[app_map]]
+glob = "{app}/pages/**"
+tier = "app"
+layer = "driving"
+[[app_map]]
+glob = "{app}/schedules/**"
+tier = "app"
+layer = "driving"
+[[app_map]]
+glob = "{app}/integrations/**"
+tier = "app"
+layer = "driven"
+[[app_map]]
+glob = "{app}/verification/**"
+tier = "app"
+layer = "proof"
+[[app_map]]
+glob = "{app}/examples/**"
+tier = "app"
+layer = "proof"
+[[app_map]]
+glob = "{app}/**"
+tier = "app"
+layer = "loose"
+
+# ── contract seams: protocol boundaries that are data, not imports ──────────
+# Roc never imports Rust. Apps return Wire.Instruction records; the host decodes them.
+# Each seam pairs emitted kind strings with handler arms. Mismatches are threats.
+[[seams]]
+id = "wire"
+label = "Wire instructions · SDK Tx/capability → host Instruction::decode"
+emit = [
+  { glob = "{platform}/sdk/data/Tx.roc", pattern = 'kind:\s*"([a-z_]+)"' },
+  { glob = "{platform}/sdk/**/*.roc", pattern = '\.capability\(\s*"([a-z_]+)"' },
+]
+handle = [
+  { file = "{platform}/crates/day2/src/protocol.rs", block = '^impl Instruction \{', pattern = '^\s*("[a-z_]+"(?:\s*\|\s*"[a-z_]+")*)\s*=>' },
+]
+
+[[seams]]
+id = "effects"
+label = "Execution effects · SDK Api.Effect → host app_contract validate"
+emit = [
+  { glob = "{platform}/sdk/contracts/Api.roc", pattern = 'kind:\s*"([a-z_]+)"' },
+]
+handle = [
+  { file = "{platform}/crates/day2/src/app_contract.rs", block = '^\s*fn validate\(', contains = "effect.kind", pattern = 'effect\.kind\s*==\s*("[a-z_]+")' },
+  { file = "{platform}/crates/day2/src/app_contract.rs", block = '^\s*fn validate\(', contains = "effect.kind", pattern = 'matches!\(effect\.kind\.as_str\(\),\s*("[a-z_]+"(?:\s*\|\s*"[a-z_]+")*)\)' },
+  { file = "{platform}/crates/day2/src/app_contract.rs", block = '^\s*fn validate\(', contains = "effect.kind", pattern = '^\s*("[a-z_]+"(?:\s*\|\s*"[a-z_]+")*)\s*=>' },
+]
+
+[[seams]]
+id = "response"
+label = "Step responses · SDK Product → host Response::decode"
+emit = [
+  { glob = "{platform}/sdk/runtime/Product.roc", pattern = 'kind:\s*"([a-z_]+)"' },
+]
+handle = [
+  { file = "{platform}/crates/day2/src/protocol.rs", block = '^impl Response \{', pattern = '^\s*("[a-z_]+"(?:\s*\|\s*"[a-z_]+")*)\s*=>' },
+]
+
+[[seams]]
+id = "predicate"
+label = "Selection predicates · SDK Predicate/Selection → host SelectionPredicate"
+note = "the SDK may also build predicate kinds dynamically"
+emit = [
+  { glob = "{platform}/sdk/data/Predicate.roc", pattern = 'kind:\s*"([a-z_]+)"' },
+  { glob = "{platform}/sdk/**/*.roc", pattern = 'Predicate\.define\([^,]+,[^,]+,\s*"([a-z_]+)"' },
+]
+handle = [
+  { file = "{platform}/crates/day2/src/protocol.rs", block = '^impl SelectionPredicate \{', pattern = '^\s*("[a-z_]+"(?:\s*\|\s*"[a-z_]+")*)\s*=>' },
+]
+
+# ── achievements this pack adds (the core ships generic ones) ───────────────
+# earned when no finding uses one of `no_rules`, and none starts in one of `clean_layers`
+[[achievements]]
+id = "pure-core"
+title = "PURE CORE"
+desc = "No domain core module depends outward"
+clean_layers = ["core", "kernel"]
+xp = 500
+
+# ── views ───────────────────────────────────────────────────────────────────
+# SDK ports: who calls each one, which host adapters implement it (seams verify; else a name match)
+[views.interfaces]
+label = "SDK ports"
+tiers = ["sdk"]
+layers = ["port"]
+implementer_tiers = ["host"]
+implementer_layers = ["adapter", "port"]
+caller_tier = "app"
+
+# Operations registered in App.roc: `operations: { submit: Submit.definition }`
+[views.use_cases]
+label = "Operations"
+entry = ["driving"]
+through = ["view", "model", "core", "generated"]
+same_context = true
+depth = 3
+[views.use_cases.registry]
+file = "App.roc"
+layer = "root"
+block = '(?s)operations\s*:\s*\{(.*?)\}'
+entry = '(\w+)\s*:\s*(\w+)\.definition'
+namespace = 'namespace:\s*"([^"]+)"'
+handles = { command = "Commands", "*" = "Reads" }

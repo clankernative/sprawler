@@ -1,0 +1,11 @@
+web/node_modules
+web/dist/
+__pycache__/
+*.pyc
+atlas.json
+/build/
+/dist/
+*.egg-info/
+.venv/
+/target/
+.DS_Store
