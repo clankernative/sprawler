@@ -27,6 +27,118 @@ pub struct Native {
     pub unresolved: u64,
     /// `.rs` files no crate root reaches through `mod` declarations.
     pub orphans: Vec<String>,
+    /// Files only compiled for tests: declared by a `#[cfg(test)] mod x;` (and everything below them).
+    pub test_only: HashSet<String>,
+    /// Per file, the line ranges of inline test-only code (`#[cfg(test)]` items and modules).
+    pub test_lines: HashMap<String, Vec<(u64, u64)>>,
+    /// `use` statements skipped because they sit in test-only code.
+    pub test_refs: u64,
+}
+
+/// `#[cfg(test)]` / `#[cfg(all(test, …))]` outer attributes, and `#![cfg(test)]` inner ones.
+fn cfg_test_re() -> Regex {
+    Regex::new(r"#\s*(!)?\s*\[\s*cfg\s*\(\s*(?:test|all\s*\([^()]*\btest\b[^()]*\))\s*\)\s*\]").unwrap()
+}
+
+/// Index just past the `}` closing the `{` at `open`.
+fn close_brace(b: &[u8], open: usize) -> usize {
+    let mut depth = 0i32;
+    for (j, &c) in b.iter().enumerate().skip(open) {
+        match c {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    b.len()
+}
+
+/// End of the item starting at `j`: past its `;` at depth 0, or past the `}` closing its body.
+fn item_end(b: &[u8], mut j: usize) -> usize {
+    let mut depth = 0i32;
+    while j < b.len() {
+        match b[j] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return j;
+                }
+                if depth == 0 {
+                    // `use a::{b, c};` / `static X: T = T { .. };`: the item ends at the `;` after the brace
+                    let k = j + 1 + b[j + 1..].iter().take_while(|c| c.is_ascii_whitespace()).count();
+                    return if b.get(k) == Some(&b';') { k + 1 } else { j + 1 };
+                }
+            }
+            b';' if depth == 0 => return j + 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    b.len()
+}
+
+/// Byte ranges of test-only code in comment/string-stripped source: each `#[cfg(test)]` item (from
+/// its attribute through its `;` or closing `}`), and for `#![cfg(test)]` the enclosing block or file.
+pub fn test_spans(t: &str) -> Vec<(usize, usize)> {
+    let b = t.as_bytes();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for c in cfg_test_re().captures_iter(t) {
+        let m = c.get(0).unwrap();
+        if c.get(1).is_some() {
+            let mut stack = Vec::new();
+            for (i, &ch) in b[..m.start()].iter().enumerate() {
+                match ch {
+                    b'{' => stack.push(i),
+                    b'}' => {
+                        stack.pop();
+                    }
+                    _ => {}
+                }
+            }
+            out.push(stack.last().map_or((0, b.len()), |&open| (open, close_brace(b, open))));
+        } else {
+            out.push((m.start(), item_end(b, m.end())));
+        }
+    }
+    out.sort();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in out {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 => last.1 = last.1.max(e),
+            _ => merged.push((s, e)),
+        }
+    }
+    merged
+}
+
+fn in_spans(spans: &[(usize, usize)], pos: usize) -> bool {
+    spans.iter().any(|(s, e)| *s <= pos && pos < *e)
+}
+
+/// The source with test-only code blanked to spaces (newlines and byte offsets kept, so line
+/// numbers still match the real file). What the Graphify mirror gets.
+pub fn sanitize(orig: &str) -> String {
+    let spans = test_spans(&strip(orig));
+    if spans.is_empty() {
+        return orig.to_string();
+    }
+    let mut b = orig.as_bytes().to_vec();
+    for (s, e) in spans {
+        let e = e.min(b.len());
+        for x in &mut b[s.min(e)..e] {
+            if *x != b'\n' {
+                *x = b' ';
+            }
+        }
+    }
+    String::from_utf8(b).unwrap_or_else(|_| orig.to_string())
 }
 
 fn dirname(p: &str) -> &str {
@@ -533,6 +645,7 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
     let mod_re = Regex::new(r"(?m)^[ \t]*(?:#\[[^\]\n]*\][ \t]*)*(?:pub(?:\([^)\n]*\))?[ \t]+)?mod[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*;").unwrap();
     let inline_re = Regex::new(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{").unwrap();
     let spans: HashMap<&str, Vec<(usize, usize, String)>> = texts.iter().map(|(f, t)| (*f, inline_spans(t, &inline_re))).collect();
+    let tspans: HashMap<&str, Vec<(usize, usize)>> = texts.iter().map(|(f, t)| (*f, test_spans(t))).collect();
 
     // module trees, one per crate root
     let mut modules: Modules = HashMap::new();
@@ -552,8 +665,8 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
             externs.insert(r.clone(), ex);
             modules.insert((r.clone(), vec![]), r.clone());
             file_ctx.entry(r.clone()).or_insert((r.clone(), vec![]));
-            let mut q = VecDeque::from([(r.clone(), Vec::<String>::new())]);
-            while let Some((file, path)) = q.pop_front() {
+            let mut q = VecDeque::from([(r.clone(), Vec::<String>::new(), false)]);
+            while let Some((file, path, test)) = q.pop_front() {
                 let Some(text) = texts.get(file.as_str()) else { continue };
                 let sp = &spans[file.as_str()];
                 let base = if file == *r || basename(&file) == "mod.rs" { dirname(&file).to_string() } else { join(dirname(&file), stem(&file)) };
@@ -564,6 +677,8 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
                     }
                     let name = m[1].to_string();
                     let span = m.get(0).unwrap();
+                    // `#[cfg(test)] mod x;` (or any mod under a test-only file): x is test-only
+                    let child_test = test || in_spans(&tspans[file.as_str()], pos);
                     // `#[path = "x.rs"] mod y;` — relative to the declaring file's folder
                     let region = &origs[file.as_str()][attr_start(text, span.start())..span.end()];
                     let cands: Vec<String> = match path_attr.captures(region) {
@@ -576,7 +691,10 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
                             np.push(name);
                             if modules.insert((r.clone(), np.clone()), p.clone()).is_none() {
                                 file_ctx.entry(p.clone()).or_insert((r.clone(), np.clone()));
-                                q.push_back((p.clone(), np));
+                                if child_test {
+                                    n.test_only.insert(p.clone());
+                                }
+                                q.push_back((p.clone(), np, child_test));
                             }
                         }
                         None => n.unresolved_mods.push(format!("{file}: mod {name}")),
@@ -614,7 +732,15 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
     let path_re = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+").unwrap();
     for f in &sorted {
         let Some((r, fpath)) = file_ctx.get(*f) else { continue };
-        let (text, sp) = (&texts[f], &spans[f]);
+        if n.test_only.contains(*f) {
+            continue; // compiled only for tests: not a production dependency
+        }
+        let (text, sp, ts) = (&texts[f], &spans[f], &tspans[f]);
+        if !ts.is_empty() {
+            let lines = ts.iter().map(|(s, e)| (line_of(text, *s), line_of(text, e.saturating_sub(1)))).collect();
+            n.test_lines.insert(f.to_string(), lines);
+        }
+        let mut test_refs = 0u64;
         let ctx_at = |pos: usize| {
             let mut inner: Vec<&(usize, usize, String)> = sp.iter().filter(|(s, e, _)| *s < pos && pos < *e).collect();
             inner.sort_by_key(|x| x.0);
@@ -632,7 +758,11 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
         for c in use_re.captures_iter(text) {
             let m = c.get(0).unwrap();
             let (line, cur) = (line_of(text, m.start()), ctx_at(m.start()));
-            for path in expand_use(&c[1]) {
+            let in_test = in_spans(ts, m.start());
+            if in_test {
+                test_refs += 1;
+            }
+            for path in expand_use(&c[1]).into_iter().filter(|_| !in_test) {
                 let segs: Vec<&str> = path.iter().map(String::as_str).collect();
                 match resolve(&modules, &externs, r, &cur, &segs) {
                     Some(Res::Ours(t, item)) => push(follow(&defs, &reexp, &crate_of, &t, item.as_deref(), 0), "uses", line),
@@ -655,6 +785,9 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
                     continue;
                 }
             }
+            if in_spans(ts, s) {
+                continue; // a path in test-only code
+            }
             let segs: Vec<&str> = m.as_str().split("::").collect();
             match resolve(&modules, &externs, r, &ctx_at(s), &segs) {
                 Some(Res::Ours(t, item)) => push(follow(&defs, &reexp, &crate_of, &t, item.as_deref(), 0), "references", line_of(&bl, s)),
@@ -663,12 +796,13 @@ pub fn analyze(root: &Path, files: &[String]) -> Native {
             }
         }
         n.unresolved += unresolved;
+        n.test_refs += test_refs;
     }
     n
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -681,6 +815,59 @@ mod tests {
         assert_eq!(got, want);
         assert_eq!(expand_use("super::x as y"), vec![vec!["super".to_string(), "x".into()]]);
         assert_eq!(expand_use("::serde::Deserialize"), vec![vec!["serde".to_string(), "Deserialize".into()]]);
+    }
+
+    /// A crate whose app.rs imports `local` for production and `local`/`other`/`helper` only in tests.
+    pub(crate) fn test_fixture() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("sprawler-cfgtest-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        let w = |f: &str, t: &str| std::fs::write(d.join(f), t).unwrap();
+        w("Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+        w("src/lib.rs", "pub mod app;\npub mod local;\npub mod other;\npub mod helper;\n#[cfg(test)]\nmod tests;\n");
+        w(
+            "src/app.rs",
+            "use crate::local::Local;\n\npub fn run() -> Local {\n    Local\n}\n\n#[cfg(test)]\nuse crate::helper::Helper;\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use crate::local::Local;\n    use crate::other::Other;\n\n    #[test]\n    fn t() {\n        let _ = (Other, Local, Helper, crate::other::Other);\n    }\n}\n",
+        );
+        w("src/local.rs", "pub struct Local;\n");
+        w("src/other.rs", "pub struct Other;\n");
+        w("src/helper.rs", "pub struct Helper;\n");
+        w("src/tests.rs", "use crate::other::Other;\n\n#[test]\nfn t() {\n    let _ = Other;\n}\n");
+        d
+    }
+
+    pub(crate) const FIXTURE_FILES: [&str; 7] = ["Cargo.toml", "src/lib.rs", "src/app.rs", "src/local.rs", "src/other.rs", "src/helper.rs", "src/tests.rs"];
+
+    #[test]
+    fn test_only_code_makes_no_production_links() {
+        let d = test_fixture();
+        let files: Vec<String> = FIXTURE_FILES.iter().map(|s| s.to_string()).collect();
+        let n = analyze(&d, &files);
+        let links: Vec<(String, String, u64)> = n.links.iter().map(|l| (l.source.clone(), l.target.clone(), l.line)).collect();
+        // the production import survives, at its own line, even though tests import the same target
+        assert!(links.contains(&("src/app.rs".into(), "src/local.rs".into(), 1)), "{links:?}");
+        assert!(!links.iter().any(|(s, _, l)| s == "src/app.rs" && *l > 5), "no link from test code: {links:?}");
+        // standalone `#[cfg(test)] use` and the inline test module's imports
+        assert!(!links.iter().any(|(s, t, _)| s == "src/app.rs" && (t == "src/helper.rs" || t == "src/other.rs")), "{links:?}");
+        // a file declared by `#[cfg(test)] mod tests;` is test-only
+        assert!(n.test_only.contains("src/tests.rs"));
+        assert!(!links.iter().any(|(s, _, _)| s == "src/tests.rs"), "{links:?}");
+        assert_eq!(n.test_lines.get("src/app.rs"), Some(&vec![(7, 8), (10, 20)]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn test_spans_cover_items_and_modules_not_cfg_not_test() {
+        let src = "#[cfg(test)]\nuse a::{b, c};\n#[cfg(not(test))]\nuse d::e;\n#[cfg(all(test, unix))]\n#[allow(unused)]\nmod m { fn f() {} }\nfn keep() {}\n";
+        let spans = test_spans(&strip(src));
+        let covered: Vec<&str> = spans.iter().map(|(s, e)| &src[*s..*e]).collect();
+        assert_eq!(covered, ["#[cfg(test)]\nuse a::{b, c};", "#[cfg(all(test, unix))]\n#[allow(unused)]\nmod m { fn f() {} }"]);
+        let clean = sanitize(src);
+        assert_eq!(clean.len(), src.len());
+        assert_eq!(clean.lines().count(), src.lines().count());
+        assert!(clean.contains("use d::e;") && clean.contains("fn keep()") && !clean.contains("a::{b") && !clean.contains("mod m"));
+        let whole = "#![cfg(test)]\nuse x::y;\n";
+        assert_eq!(test_spans(&strip(whole)), vec![(0, whole.len())]);
     }
 
     #[test]
