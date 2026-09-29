@@ -9,10 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "jspdf": "^3.0.4",
-    "three": "^0.180.0"
+    "jspdf": "^4.2.1",
+    "three": "^0.186.1"
   },
   "devDependencies": {
-    "vite": "^7.0.0"
+    "vite": "^8.3.1"
   }
 }
