@@ -286,7 +286,7 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sprawler"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "clap",
  "include_dir",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-go"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-kit"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-python"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-roc"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-rust"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-analyzer-typescript"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-domain"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "regex",
  "serde",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "sprawler-protocol"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "serde_json",

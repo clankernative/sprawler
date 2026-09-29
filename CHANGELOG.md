@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+- **Rust analyzer:** a Graphify link into another crate is kept only when the file's own imports or
+  paths reach that crate, so two items with the same name in different crates are no longer linked.
+  Cargo dependencies are recorded between crates, not as a link from the crate's `lib.rs`. Findings
+  are now the same with and without Graphify.
+- **Labels:** a repo with no profile is scored on structure only ("STRUCTURE HEALTH"); scores
+  against rules are labelled "ARCHITECTURE HEALTH" instead of "HEXAGON INTEGRITY". Badge text and
+  scores may change; if you use `check --baseline`, rerun `sprawler baseline .`.
+
 ## 0.3.1
 
 - **Rust analyzer:** code under `#[cfg(test)]` (inline test modules, `#[cfg(test)] use`, files
