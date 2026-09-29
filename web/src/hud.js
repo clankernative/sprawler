@@ -81,7 +81,7 @@ export function renderLeft(A, F, selKey) {
     <div class="score">
       <div class="grade" style="color:${s.withheld ? '#5c6773' : GRADE[s.grade]};text-shadow:0 0 24px ${s.withheld ? 'transparent' : GRADE[s.grade]}" title="${s.withheld ? 'grade withheld: confidence too low to back it up' : ''}">${s.withheld ? '?' : s.grade}</div>
       <div class="sc"><div class="big"><span id="scoreNum">${s.total}</span><small>/100</small></div>
-        <div class="lbl">${esc(s.label || 'HEXAGON INTEGRITY')}${s.withheld ? ' · NOT ENOUGH EVIDENCE' : ''}</div>
+        <div class="lbl">${esc(s.label || 'ARCHITECTURE HEALTH')}${s.withheld ? ' · NOT ENOUGH EVIDENCE' : ''}</div>
         <div class="xp"><s style="width:${pct(s.xp / Math.max(1, s.xpMax))}"></s></div>
         <div class="lbl">${s.xp} / ${s.xpMax} XP</div></div>
     </div>

@@ -659,7 +659,7 @@ pub fn judge(p: &Policy, g: &Graph) -> Judged {
     }
     let label = p.scoring.label.clone().unwrap_or_else(|| {
         match mode.as_str() {
-            "policy" => "HEXAGON INTEGRITY",
+            "policy" => "ARCHITECTURE HEALTH",
             "structure" => "STRUCTURE HEALTH",
             _ => "ARCHITECTURE HEALTH",
         }

@@ -266,10 +266,6 @@ fn analyze(req: &Value) -> Result<Value, String> {
             }
         }
 
-        let crate_root = |cargo_rel: &str| -> Option<String> {
-            let d = dirname(cargo_rel);
-            ["src/lib.rs", "src/main.rs"].iter().map(|c| format!("{d}/{c}")).find(|p| known.contains(p.as_str()))
-        };
         let crate_dirs: HashSet<&str> = cargo.iter().map(|c| dirname(c)).collect();
         let crate_of = |f: &str| -> Option<String> {
             let mut d = dirname(f);
@@ -278,6 +274,9 @@ fn analyze(req: &Value) -> Result<Value, String> {
             }
             (!d.is_empty()).then(|| d.to_string())
         };
+        // which crates each file really reaches, from native `use` / path resolution
+        let reaches: HashSet<(String, Option<String>)> = nat.links.iter().map(|l| (l.source.clone(), crate_of(&l.target))).collect();
+        let mut unconfirmed = 0u64;
         let mut dep_dirs: HashSet<(String, String)> = HashSet::new();
         for e in links.iter().filter(|e| e.get("relation").and_then(Value::as_str) == Some("depends_on")) {
             let a = file_of(e.get("source")).unwrap_or("");
@@ -302,10 +301,9 @@ fn analyze(req: &Value) -> Result<Value, String> {
             if rel_t == "depends_on" {
                 if let (Some(s), Some(o)) = (sf, other) {
                     if s.ends_with("Cargo.toml") && o.ends_with("Cargo.toml") {
+                        // a Cargo dependency is a crate-level fact (`declared`), not a file edge: pinning it on
+                        // the crate root would blame a file that may never use the dependency
                         declared.push((s.to_string(), o.to_string()));
-                        if let (Some(ra), Some(rb)) = (crate_root(s), crate_root(o)) {
-                            edges.add(&ra, &rb, "depends_on", None, &known);
-                        }
                     }
                 }
                 continue;
@@ -328,9 +326,19 @@ fn analyze(req: &Value) -> Result<Value, String> {
                 impossible += 1;
                 continue;
             }
+            if ca != cb && !reaches.contains(&(s.to_string(), cb.clone())) {
+                // Graphify resolved a bare name (e.g. `Database`) into another crate the file never imports
+                // or names: two files defining the same name are not the same thing
+                unconfirmed += 1;
+                continue;
+            }
             edges.add(s, o, rel_t, loc_line(e.get("source_location")), &known);
         }
         stats["impossible"] = json!(impossible);
+        stats["unconfirmed"] = json!(unconfirmed);
+        if unconfirmed > 0 {
+            warnings.push(format!("dropped {unconfirmed} cross-crate Graphify link(s) no import or path confirms (same name, different item)"));
+        }
         stats["testDropped"] = json!(test_dropped);
         if impossible > 0 {
             warnings.push(format!("dropped {impossible} cross-crate Rust refs with no Cargo dependency (resolver name collisions)"));
@@ -450,6 +458,9 @@ os.makedirs(os.path.join(m, "graphify-out"), exist_ok=True)
 json.dump({"nodes": nodes, "links": links}, open(os.path.join(m, "graphify-out", "graph.json"), "w"))
 "#;
 
+    /// Tests here set SPRAWLER_GRAPHIFY; they take this lock so they don't race.
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn edges(out: &Value) -> Vec<(String, String, u64)> {
         let s = |e: &Value, k: &str| e[k].as_str().unwrap_or("").to_string();
         out["edges"].as_array().unwrap().iter().map(|e| (s(e, "source"), s(e, "target"), e["line"].as_u64().unwrap_or(0))).collect()
@@ -461,6 +472,7 @@ json.dump({"nodes": nodes, "links": links}, open(os.path.join(m, "graphify-out",
             eprintln!("skipped: needs python3 for the fake graphify");
             return;
         }
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         let d = test_fixture();
         let cache = d.join("cache");
         let fake = d.join("fake-graphify");
@@ -487,6 +499,71 @@ json.dump({"nodes": nodes, "links": links}, open(os.path.join(m, "graphify-out",
             }
         }
         std::env::remove_var("SPRAWLER_GRAPHIFY");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A stand-in Graphify that resolves bare names to the first file defining them, anywhere: it
+    /// links `b.rs` (which defines its own `Database`) to the host crate's `Database`.
+    const NAME_MATCHING_GRAPHIFY: &str = r#"#!/usr/bin/env python3
+import json, os, sys
+m = sys.argv[2]
+files = []
+for d, dn, fn in os.walk(m):
+    dn[:] = [x for x in dn if x != "graphify-out"]
+    files += [os.path.relpath(os.path.join(d, f), m) for f in fn if f.endswith(".rs") or f == "Cargo.toml"]
+nodes = [{"id": f, "source_file": f, "label": os.path.basename(f)} for f in files]
+links = [{"source": "app/Cargo.toml", "target": "host/Cargo.toml", "relation": "depends_on", "source_file": "app/Cargo.toml"}]
+for f in files:
+    if not f.endswith(".rs"):
+        continue
+    for n, line in enumerate(open(os.path.join(m, f)).read().split("\n"), 1):
+        for name, t in (("Thing", "host/src/lib.rs"), ("Database", "host/src/db.rs")):
+            if name in line and not f.startswith("host/"):
+                links.append({"source": f, "target": t, "relation": "references", "source_file": f, "source_location": "L%d" % n, "confidence_score": 1.0})
+os.makedirs(os.path.join(m, "graphify-out"), exist_ok=True)
+json.dump({"nodes": nodes, "links": links}, open(os.path.join(m, "graphify-out", "graph.json"), "w"))
+"#;
+
+    #[test]
+    fn same_name_in_another_crate_is_not_a_link() {
+        if which("python3").is_none() {
+            eprintln!("skipped: needs python3 for the fake graphify");
+            return;
+        }
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("sprawler-samename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let w = |f: &str, t: &str| {
+            let p = d.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        w("app/Cargo.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nhost = { path = \"../host\" }\n");
+        w("app/src/lib.rs", "mod a;\nmod b;\n");
+        w("app/src/a.rs", "use host::Thing;\n\npub fn f() -> Thing {\n    Thing\n}\n");
+        w("app/src/b.rs", "pub struct Database;\n\npub fn g() -> Database {\n    Database\n}\n");
+        w("host/Cargo.toml", "[package]\nname = \"host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+        w("host/src/lib.rs", "pub mod db;\npub struct Thing;\n");
+        w("host/src/db.rs", "pub struct Database;\n");
+        let fake = d.join("fake-graphify");
+        std::fs::write(&fake, NAME_MATCHING_GRAPHIFY).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let files = ["app/Cargo.toml", "app/src/lib.rs", "app/src/a.rs", "app/src/b.rs", "host/Cargo.toml", "host/src/lib.rs", "host/src/db.rs"];
+        let req = json!({"protocol": PROTOCOL, "root": d.to_string_lossy(), "files": files, "tests": [],
+                         "cache_dir": d.join("cache").to_string_lossy(), "options": {}});
+        std::env::set_var("SPRAWLER_GRAPHIFY", &fake);
+        let out = analyze(&req).unwrap();
+        std::env::remove_var("SPRAWLER_GRAPHIFY");
+        let e = edges(&out);
+        // a.rs really imports host::Thing: kept
+        assert!(e.iter().any(|(a, b, _)| a == "app/src/a.rs" && b == "host/src/lib.rs"), "{e:?}");
+        // b.rs only has its own Database: Graphify's name match into host is dropped
+        assert!(!e.iter().any(|(a, b, _)| a == "app/src/b.rs" && b.starts_with("host/")), "{e:?}");
+        assert!(out["stats"]["unconfirmed"].as_u64().unwrap() >= 1, "{}", out["stats"]);
+        // a Cargo dependency is a crate fact, not a file edge
+        assert!(!e.iter().any(|(a, b, _)| a == "app/src/lib.rs" && b == "host/src/lib.rs"), "{e:?}");
+        assert!(out["declared"].as_array().unwrap().iter().any(|p| p[0] == "app/Cargo.toml" && p[1] == "host/Cargo.toml"));
         let _ = std::fs::remove_dir_all(&d);
     }
 }
