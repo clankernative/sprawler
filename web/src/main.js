@@ -167,7 +167,7 @@ async function boot() {
   await tally('bsFix', sm.fix + sm.improve + sm.check, 450)
   stage('ready', 1)
   const gc = A.score.withheld ? '#5c6773' : GRADE[A.score.grade]
-  $('bootGrade').innerHTML = `<b style="color:${gc};text-shadow:0 0 40px ${gc}">${A.score.withheld ? '?' : A.score.grade}</b><span>${A.score.total}<small>/100</small><i>${H.esc((A.score.label || 'hexagon integrity').toLowerCase())}${A.score.withheld ? ' · not enough evidence' : ''}</i></span>`
+  $('bootGrade').innerHTML = `<b style="color:${gc};text-shadow:0 0 40px ${gc}">${A.score.withheld ? '?' : A.score.grade}</b><span>${A.score.total}<small>/100</small><i>${H.esc((A.score.label || 'architecture health').toLowerCase())}${A.score.withheld ? ' · not enough evidence' : ''}</i></span>`
   $('bootGrade').classList.add('on')
   await sleep(450)
   $('engage').classList.add('ready')

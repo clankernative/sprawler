@@ -338,6 +338,8 @@ fn plugin_defaults_profile(d: &Value) -> Result<Obj, String> {
         ("extensions", json!(exts)),
         ("cache_key", json!(profile::slug(Path::new(&root)))),
         ("_defaults_from", json!(used)),
+        // plugin defaults describe structure, not a design: score cycles, tangle and hubs only
+        ("scoring", json!({"mode": "structure", "label": "STRUCTURE HEALTH"})),
     ] {
         p.insert(k.into(), v);
     }
