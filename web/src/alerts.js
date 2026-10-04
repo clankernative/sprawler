@@ -335,7 +335,12 @@ export class Alerts {
   // ── advisor ──────────────────────────────────────────────────────────────
   pumpAdvisor() {
     if (this.advisorOpen || !this.queue.length) return
+    // lead with what you can still act on: an uncommitted rule break beats a broken bridge, which beats
+    // the grade/trophy fallout of the same change (that consequence is dropped when its cause is shown)
+    const rank = (e) => (e.kind === 'track.cut' ? (e.wip ? 0 : 2) : e.kind === 'bridge.broken' ? 1 : e.kind === 'cycle.new' ? 3 : 4)
+    this.queue.sort((x, y) => rank(x) - rank(y))
     const e = this.queue.shift()
+    if (e.kind === 'track.cut') this.queue = this.queue.filter((q) => !(['grade.down', 'trophy.lost'].includes(q.kind) && (!q.ctx || q.ctx === e.ctx)))
     this.showAdvisor(e)
   }
 
