@@ -255,7 +255,7 @@ export function createAdmin(root, api) {
       findings: A.violations.length, contexts: A.contexts.length, modules: A.modules.filter((m) => !m.generated).length,
       seams: (A.seams || []).length, ports: (A.ports || []).length, flows: (A.flows || []).length, history: (A.history || []).length,
     }
-    root.innerHTML = `<aside class="anav"><div class="abrand">⬡ SPRAWLER</div>
+    root.innerHTML = `<aside class="anav"><div class="abrand"><img src="./logo.svg" alt="" style="width:22px;height:22px;vertical-align:-6px;margin-right:8px;border-radius:6px">SPRAWLER</div>
       ${NAV.map(([k, l]) => `<a class="${page === k ? 'on' : ''}" data-page="${k}">${esc(navLabel(k, l))}${counts[k] != null ? `<em>${counts[k]}</em>` : ''}</a>`).join('')}
       <div class="anavfoot">Press <b>G</b> to switch views</div></aside>
       <div class="abody"><header class="ahead"><div><b>${esc(A.project.title)}</b><span>${esc([A.project.branch, A.project.sha].filter(Boolean).join(' · '))}</span></div>

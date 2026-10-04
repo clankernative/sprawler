@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="Sprawler" width="96" align="right">
+
 # Sprawler
 
 [![ci](https://github.com/clankernative/sprawler/actions/workflows/ci.yml/badge.svg)](https://github.com/clankernative/sprawler/actions/workflows/ci.yml)

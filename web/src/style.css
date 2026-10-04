@@ -30,8 +30,7 @@ body.on .hud { opacity: 1; }
 #top { top: 10px; left: 12px; right: 12px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 14px; z-index: 12; }
 body:not(.on) #top { transform: translateY(-16px); }
 .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; flex: none; }
-.brand .mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-size: 17px;
-  background: linear-gradient(140deg, #3f7bff, #2556d8); box-shadow: 0 3px 10px rgba(47, 107, 255, .35); }
+.brand .mark { width: 34px; height: 34px; border-radius: 9px; display: block; box-shadow: 0 3px 10px rgba(12, 20, 34, .3); }
 .brand b { display: block; font-size: 13px; letter-spacing: .4px; }
 .brand em { display: block; font-style: normal; color: var(--dim); font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .head { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
@@ -704,3 +703,5 @@ body.chopper #lowerThird { display: flex; animation: ltin .5s cubic-bezier(.2, 1
 body.chopper::before, body.chopper::after { content: ''; position: fixed; left: 0; right: 0; height: 6vh; background: #000; z-index: 8; pointer-events: none; }
 body.chopper::before { top: 0; } body.chopper::after { bottom: 0; }
 body.chopper .hud, body.chopper #markers { opacity: 0 !important; pointer-events: none !important; }
+
+#boot .bootlogo { display: block; width: 76px; height: 76px; margin: 0 auto 10px; border-radius: 20px; box-shadow: 0 10px 28px rgba(12, 20, 34, .35); animation: gin .7s cubic-bezier(.2, 1.4, .4, 1); }
