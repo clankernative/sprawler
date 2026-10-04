@@ -1,6 +1,6 @@
 import './style.css'
 import { createWorld } from './scene.js'
-import { AtlasView, GRADE } from './atlas.js'
+import { CityView, GRADE, ARCH, ARCH_ICON, LENSES } from './city/CityView.js'
 import { initAudio, sfx, toggleMute } from './audio.js'
 import * as H from './hud.js'
 import { exportView } from './export.js'
@@ -10,26 +10,24 @@ import { buildInbox, loadMarks, mark, status, summarize } from './inbox.js'
 
 const $ = (id) => document.getElementById(id)
 const world = createWorld($('stage'))
-const view = new AtlasView(world)
+const view = new CityView(world)
+view.onThunder = () => { if (!document.hidden) sfx.thunder?.() }
 let A = null
 let version = 0
-let tab = 'inbox'
+let tab = 'flows'
+let prevA = null
 let curCommit = null
 let replayTimer = null
 let booted = false
 let isStatic = false
 let adminOn = false
-// render debug panel (` key): switch each rendering stage off live to find GPU-specific artifacts
-const dbg = { bloom: true, sanitize: true, fx: true, msaa: true, floor: true, stars: true, particles: true, shift: true }
+// render debug panel (` key): switch render stages off live
+const dbg = { ao: true, tilt: true, shadows: true, night: false }
 function applyDbg() {
-  world.bloom.enabled = dbg.bloom && !document.body.classList.contains('doc')
-  world.sanitize.enabled = dbg.sanitize
-  world.fx.enabled = dbg.fx
-  world.floor.visible = dbg.floor
-  world.stars.visible = dbg.stars && !document.body.classList.contains('doc')
-  if (view.pts) view.pts.visible = dbg.particles && !document.body.classList.contains('doc')
-  const n = dbg.msaa ? 4 : 0
-  for (const t of [world.composer.renderTarget1, world.composer.renderTarget2]) if (t.samples !== n) { t.samples = n; t.dispose() }
+  world.ao.enabled = dbg.ao
+  world.look.enabled = dbg.tilt
+  world.renderer.shadowMap.enabled = dbg.shadows
+  world.setNight(dbg.night)
 }
 function renderDbg() {
   let el = document.getElementById('dbg')
@@ -65,7 +63,8 @@ function loop(now) {
   const t = now / 1000
   if (!adminOn) { // the 3D view sleeps while the tables are open
     view.update(t, dt)
-    if (booted && (frameN++ % 6 === 0)) world.setFrameShift(dbg.shift ? innerWidth / 2 - freeCenter() : 0)
+    if (booted) alerts.update(t, dt)
+    if (booted && (frameN++ % 6 === 0)) world.setFrameShift(innerWidth / 2 - freeCenter())
     if (booted && frameN % 6 === 3) updateScope()
     world.tick(t, dt)
   }
@@ -88,6 +87,7 @@ async function fetchAtlas() {
 
 function renderAll() {
   H.renderTop(A)
+  H.renderKPI(A, prevA)
   H.renderLeft(A, view.filters, view.sel?.type === 'ctx' ? view.sel.key : null)
   H.renderRight(A, tab, curCommit)
 }
@@ -147,27 +147,27 @@ async function boot() {
   version = A.scan || 0
   view.onCtxClick = (k, e) => (e?.shiftKey ? togglePick(k) : (clearRoom(), focusCtx(k)))
   view.onSeamClick = (id) => { clearRoom(); selectSeam(id) }
-  view.build(A)
-  world.camera.position.set(0, view.L.extent * 1.7, view.L.extent * 2.3)
+  await view.build(A)
+  alerts.start()
+  world.camera.position.set(0, view.L.extent * 1.25, view.L.extent * 1.7)
   world.controls.target.set(0, 0, 0)
   renderAll()
-  view.startBoot() // islands rise behind the card
-  world.scan()
+  view.startBoot() // the city builds itself behind the card
   bootReady = true
   $('boot').classList.add('live')
   const sm = summarize(A)
-  stage(`reading ${(A.stats?.files ?? A.modules.length).toLocaleString()} files`, 0.3)
+  stage(`surveying ${(A.stats?.files ?? A.modules.length).toLocaleString()} files`, 0.3)
   await tally('bsMods', A.modules.length)
-  stage('judging every dependency', 0.55)
+  stage('paving roads for every dependency', 0.55)
   await tally('bsDeps', A.score.edges)
-  stage('mapping bounded contexts', 0.76)
+  stage('zoning the districts', 0.76)
   await tally('bsCtx', A.contexts.length, 450)
-  stage('collecting findings', 0.92)
+  stage('bulldozing the dirt roads', 0.92)
   if (sm.fix) $('bsFix').parentElement.classList.add('hot')
   await tally('bsFix', sm.fix + sm.improve + sm.check, 450)
-  stage('ready', 1)
+  stage('the city is open', 1)
   const gc = A.score.withheld ? '#5c6773' : GRADE[A.score.grade]
-  $('bootGrade').innerHTML = `<b style="color:${gc};text-shadow:0 0 40px ${gc}">${A.score.withheld ? '?' : A.score.grade}</b><span>${A.score.total}<small>/100</small><i>${H.esc((A.score.label || 'architecture health').toLowerCase())}${A.score.withheld ? ' · not enough evidence' : ''}</i></span>`
+  $('bootGrade').innerHTML = `<b style="background:${gc}">${A.score.withheld ? '?' : A.score.grade}</b><span>${A.score.total}<small>/100</small><i>${H.esc((A.score.label || 'architecture health').toLowerCase())}${A.score.withheld ? ' · not enough evidence' : ''}</i></span>`
   $('bootGrade').classList.add('on')
   await sleep(450)
   $('engage').classList.add('ready')
@@ -182,18 +182,14 @@ function engage() {
   $('boot').classList.add('gone')
   document.body.classList.add('on')
   setTimeout(() => sfx.scan(), 150)
-  world.scan()
-  world.flyTo([0, 0, 0], view.L.extent * 1.55, 2.6)
-  setTimeout(() => world.shake(0.6), 2000)
+  world.flyTo([0, 0, 0], view.L.extent * 1.15, 2.6)
   setTimeout(() => {
     const el = $('scoreNum')
     if (el) H.countUp(el, A.score.total, 1500, sfx.tick)
   }, 1200)
-  setTimeout(() => {
-    const got = A.achievements.filter((a) => a.earned)
-    got.slice(0, 3).forEach((a, i) => setTimeout(() => { H.toast(`<b>★ ${H.esc(a.title)}</b><span>+${a.xp} XP</span>`, 'gold'); sfx.chord() }, i * 650))
-  }, 3200)
   poll()
+  // a shared link wins; otherwise the morning paper, then (first visit only) the tour
+  setTimeout(() => { if (!restoreHash()) alerts.maybePaper(() => setTimeout(maybeTour, 500)) }, 2800)
   if (localStorage.getItem('sprawler:mode') === 'admin') setTimeout(() => setAdmin(true), 300)
 }
 $('boot').addEventListener('pointerdown', engage)
@@ -229,8 +225,10 @@ async function applyUpdate() {
   const fixed = [...oldV].filter((x) => !newV.has(x)).length
   const added = [...newV].filter((x) => !oldV.has(x)).length
   const had = new Set(old.achievements.filter((a) => a.earned).map((a) => a.id))
+  prevA = old
   A = fresh
-  view.build(A, { instant: true })
+  await view.build(A, { instant: true })
+  alerts.rebuild()
   renderAll()
   refreshDetail()
   if (adminOn) { admin.setAtlas(A); admin.render() }
@@ -275,8 +273,11 @@ function copyRule(rule) {
 }
 
 // ── flows & ports ───────────────────────────────────────────────────────────
+import { Alerts } from './alerts.js'
+import { Palette, runTour } from './palette.js'
+const alerts = new Alerts({ world, view, H, sfx, get A() { return A }, focusCtx: (k) => focusCtx(k), selectModule: (id) => selectModule(id), selectThreat: (i) => selectThreat(i), selectSeam: (id) => selectSeam(id), copyThreat: (i) => copyThreat(i), clearRoom: () => clearRoom(), isStatic: () => isStatic })
 let flowTimer = null
-function stopFlow() { if (flowTimer) { clearInterval(flowTimer); flowTimer = null } }
+function stopFlow() { view.stopDrive?.(); if (flowTimer) { clearInterval(flowTimer); flowTimer = null; alerts.flowEnd() } }
 
 function selectFlow(i, fly = true) {
   const f = A.flows[i]
@@ -291,12 +292,18 @@ function selectFlow(i, fly = true) {
 function playFlow(i) {
   selectFlow(i)
   const f = A.flows[i]
-  const order = Object.values(f.stages).map((ids) => ids.filter((id) => view.mods.has(id))).filter((s) => s.length)
+  const named = Object.entries(f.stages).map(([key, ids]) => ({ key, ids: ids.filter((id) => view.mods.has(id)) })).filter((s) => s.ids.length)
+  const order = named.map((s) => s.ids)
+  const bad = new Set(f.violations.flatMap((j) => [A.violations[j]?.source, A.violations[j]?.target]))
+  alerts.flowStart(f, named)
+  view.drive?.(order.flat(), f.kind)
   const visited = []
   let k = 0
   flowTimer = setInterval(() => {
+    alerts.flowStep(k, order[k]?.some((id) => bad.has(id)))
     if (k >= order.length) {
-      stopFlow()
+      clearInterval(flowTimer); flowTimer = null
+      alerts.flowEnd(4000)
       H.toast(`<b>▶ ${H.esc(f.id)}</b><span>${f.path.length} modules · ${f.violations.length ? f.violations.length + ' findings on path' : 'clean path'}</span>`, f.violations.length ? 'bad' : '')
       return
     }
@@ -307,7 +314,7 @@ function playFlow(i) {
     visited.push(...order[k])
     sfx.tick(); sfx.hover()
     k++
-  }, 450)
+  }, 900)
 }
 
 function selectPort(i) {
@@ -325,7 +332,7 @@ function selectPort(i) {
 
 // ── selection ───────────────────────────────────────────────────────────────
 function stopReplay() {
-  if (replayTimer) { clearInterval(replayTimer); replayTimer = null; const b = $('replay'); if (b) b.textContent = '▶ REPLAY' }
+  if (replayTimer) { clearInterval(replayTimer); replayTimer = null }
 }
 
 function selectModule(id, fly = true) {
@@ -334,10 +341,11 @@ function selectModule(id, fly = true) {
   stopReplay()
   curCommit = null
   view.select({ type: 'module', id })
-  if (fly) { world.flyTo(view.posOf(id), 34); sfx.whoosh() }
+  if (fly) { const f = view.frameOf(id); world.flyTo(f ? f.pos : view.posOf(id), f ? f.dist : 48); sfx.whoosh() }
   sfx.click()
   H.showDetail(H.detailModule(A, m, view.neighbors(id)))
   H.renderLeft(A, view.filters, null)
+  syncHash()
 }
 
 function focusCtx(key) {
@@ -351,6 +359,7 @@ function focusCtx(key) {
   sfx.whoosh(); sfx.click()
   H.showDetail(H.detailCtx(A, c, view.filters.solo))
   H.renderLeft(A, view.filters, key)
+  syncHash()
 }
 
 // ── contract seams ──────────────────────────────────────────────────────────
@@ -385,11 +394,34 @@ function openThreat(i) {
   if (it) H.openSec('f:' + it.id)
   H.renderRight(A, tab, curCommit)
   selectThreat(i)
-  const row = document.querySelector(`#rightBody [data-threat="${i}"]`)
+  const row = document.querySelector(`#quests [data-threat="${i}"]`)
   if (row) { row.classList.add('flash'); row.scrollIntoView({ block: 'center', behavior: 'smooth' }) }
 }
 
-function selectThreat(i) {
+function showTicket(i) {
+  const v = A.violations[i]
+  if (!v) return
+  selectThreat(i, true)
+  H.showDetail(H.detailTicket(A, v, i))
+  sfx.siren()
+}
+
+function toggleImpact(id) {
+  if (!id || !view.mods.has(id)) return
+  if (view.impactIds && impactOf === id) { view.clearImpact(); impactOf = null; view.applyState(); H.showDetail(H.detailModule(A, view.mods.get(id), view.neighbors(id))); return }
+  view.select({ type: 'module', id })
+  const ring = view.impact(id)
+  impactOf = id
+  H.showDetail(H.detailImpact(A, view.mods.get(id), ring))
+  sfx.boom(); world.shake(0.5)
+  // frame the blast radius
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9
+  for (const mid of [id, ...ring.keys()]) { const p = view.posOf(mid); x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[2]); z1 = Math.max(z1, p[2]) }
+  world.flyTo([(x0 + x1) / 2, 0, (z0 + z1) / 2], Math.max(60, Math.min(500, Math.max(x1 - x0, z1 - z0) * 1.2)), 1.2)
+}
+let impactOf = null
+
+function selectThreat(i, quiet = false) {
   const v = A.violations[i]
   if (!v) return
   stopReplay()
@@ -402,6 +434,7 @@ function selectThreat(i) {
   const a = view.posOf(v.source), b = view.posOf(v.target)
   const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 4, (a[2] + b[2]) / 2]
   world.flyTo(mid, Math.max(30, Math.hypot(a[0] - b[0], a[2] - b[2]) * 1.3))
+  if (quiet) return
   world.shake(v.severity === 'critical' ? 1.4 : 0.7)
   sfx.alarm()
   H.showDetail(H.detailThreat(A, v, i))
@@ -426,6 +459,7 @@ function clearRoom() {
 }
 
 function clearSel() {
+  if (view.impactIds) { view.clearImpact(); impactOf = null }
   if (autoHidR && document.body.classList.contains('hideR')) toggleDrawer('R', true)
   autoHidR = false
   view.filters.solo.clear()
@@ -436,11 +470,12 @@ function clearSel() {
   H.showDetail(null)
   H.renderLeft(A, view.filters, null)
   H.renderRight(A, tab, curCommit)
+  syncHash()
 }
 
 function overview() {
   clearSel()
-  world.flyTo([0, 0, 0], view.L.extent * 1.55, 1.4)
+  world.flyTo([0, 0, 0], view.L.extent * 1.15, 1.4)
   sfx.whoosh()
 }
 
@@ -452,7 +487,7 @@ function resetView(fly = true) {
   F.isolate = 'off'
   clearSel()
   refreshFilters()
-  if (fly) { world.flyTo([0, 0, 0], view.L.extent * 1.55, 1.2); sfx.whoosh() }
+  if (fly) { world.flyTo([0, 0, 0], view.L.extent * 1.15, 1.2); sfx.whoosh() }
   H.toast('<b>⌂ SHOWING EVERYTHING</b><span>selection and isolation cleared</span>')
 }
 
@@ -496,23 +531,57 @@ function refreshDetail() {
   else if (s.type === 'ctx') H.showDetail(H.detailCtx(A, view.ctxs.get(s.key), view.filters.solo))
 }
 
-function replay() {
-  if (replayTimer) return stopReplay()
-  if (!A.history.length) return
-  let i = A.history.length - 1
-  $('replay').textContent = '■ STOP'
-  tab = 'history'
-  const step = () => {
-    selectCommit(i, true)
-    const el = document.querySelector(`[data-commit="${i}"]`)
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    const b = $('replay'); if (b) b.textContent = '■ STOP'
-    i--
-    if (i < 0) stopReplay()
-  }
-  step()
-  replayTimer = setInterval(step, 1800)
+// ── time-lapse: scrub through history, each commit's buildings light up under a crane flash ──
+const scrub = { i: 0, playing: false, timer: null }
+function replay() { openScrub(true) }
+function openScrub(play = false) {
+  if (!A.history.length) return H.toast('<b>NO HISTORY</b><span>this workspace has no commits to replay</span>')
+  const el = $('scrub')
+  const N = A.history.length
+  // history is newest-first; the slider runs oldest → newest, left → right
+  const days = A.history.map((c) => c.ts)
+  el.innerHTML = `<div class="sh"><b>⏳ Time-lapse</b><span id="scrubInfo"></span><button class="x" data-scrubclose>✕</button></div>
+    <div class="sr"><button id="scrubPlay" class="sp">▶</button><div class="strack"><div class="sticks">${A.history.map((c, k) => `<i style="left:${((N - 1 - k) / Math.max(1, N - 1)) * 100}%;height:${6 + Math.min(18, c.blast * 3)}px" class="${c.shotgun ? 'hot' : ''}"></i>`).join('')}</div>
+    <input id="scrubIn" type="range" min="0" max="${N - 1}" step="1" value="${N - 1}"></div>
+    <span class="sd">${new Date(days[N - 1] * 1000).toLocaleDateString()} → ${new Date(days[0] * 1000).toLocaleDateString()}</span></div>`
+  el.classList.add('open')
+  const input = $('scrubIn')
+  input.oninput = () => scrubTo(+input.value, false)
+  $('scrubPlay').onclick = () => (scrub.playing ? pauseScrub() : playScrub())
+  el.querySelector('[data-scrubclose]').onclick = closeScrub
+  scrubTo(play ? 0 : N - 1, false)
+  if (play) playScrub()
 }
+function scrubTo(pos, auto) {
+  const N = A.history.length
+  const i = N - 1 - pos // slider position → history index
+  const c = A.history[i]
+  if (!c) return
+  scrub.i = pos
+  $('scrubIn').value = pos
+  selectCommit(i, true)
+  const mods = c.modules.filter((m) => view.mods.has(m))
+  // crane flash: confetti-dust over every touched building
+  for (const m of mods.slice(0, 12)) { const p = view.posOf(m); alerts.fx.confetti([p[0], p[1] * 2 + 2, p[2]], 14) }
+  if (auto && mods.length) {
+    let x = 0, z = 0
+    for (const m of mods) { const p = view.posOf(m); x += p[0]; z += p[2] }
+    world.flyTo([x / mods.length, 0, z / mods.length], Math.max(110, Math.min(380, world.camera.position.distanceTo(world.controls.target))), 1.1)
+  }
+  $('scrubInfo').innerHTML = `<b>${H.esc(c.subject)}</b> <small>${H.esc(c.author)} · ${H.ago(c.ts)} · ${c.modules.length} building${c.modules.length === 1 ? '' : 's'}${c.shotgun ? ' · <span class="c-bad">shotgun</span>' : ''}</small>`
+  sfx.tick()
+}
+function playScrub() {
+  scrub.playing = true
+  $('scrubPlay').textContent = '❚❚'
+  if (scrub.i >= A.history.length - 1) scrub.i = -1
+  scrub.timer = setInterval(() => {
+    if (scrub.i >= A.history.length - 1) return pauseScrub()
+    scrubTo(scrub.i + 1, true)
+  }, 1500)
+}
+function pauseScrub() { scrub.playing = false; clearInterval(scrub.timer); const b = $('scrubPlay'); if (b) b.textContent = '▶' }
+function closeScrub() { pauseScrub(); $('scrub').classList.remove('open'); clearSel() }
 
 // ── multi-select, isolate, document mode ───────────────────────────────────
 function refreshFilters() {
@@ -542,7 +611,7 @@ function setIsolate(m) {
 
 function fitPicked(dir = null) {
   const keys = [...(view._allow || view.filters.picked)]
-  if (!keys.length) { world.flyTo([0, 0, 0], view.L.extent * 1.55, 1.2, dir); return }
+  if (!keys.length) { world.flyTo([0, 0, 0], view.L.extent * 1.15, 1.2, dir); return }
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9
   for (const k of keys) {
     const { pos, radius } = view.ctxCenter(k)
@@ -556,6 +625,7 @@ function fitPicked(dir = null) {
 
 function toggleDrawer(side, auto = false) {
   const on = document.body.classList.toggle('hide' + side)
+  if (side === 'R') setTimeout(syncDock, 0)
   $(side === 'L' ? 'lDrawer' : 'rDrawer').textContent = side === 'L' ? (on ? '›' : '‹') : (on ? '‹' : '›')
   if (!auto) { sfx.whoosh(); if (side === 'R') autoHidR = false }
 }
@@ -627,12 +697,12 @@ function toggleTangle() {
     world.flyTo([0, view.L.extent * 0.6, 0], view.L.extent * 1.9, 1.6)
   } else {
     H.toast('<b>HEX MODE</b><span>the same graph, placed by its architecture</span>')
-    world.flyTo([0, 0, 0], view.L.extent * 1.55, 1.6)
+    world.flyTo([0, 0, 0], view.L.extent * 1.15, 1.6)
   }
 }
 
 // ── preset views, saved views, inbox actions ───────────────────────────────
-const EXPLORE = ['flows', 'ports', 'trophies']
+const EXPLORE = ['flows', 'ports', 'smells', 'trophies']
 let lastSub = 'flows'
 
 // every preset starts from a clean slate, so it looks the same no matter what you did before
@@ -642,6 +712,7 @@ function applyView(v = {}) {
   const wantTangle = !!v.tangle
   if (wantTangle !== tangled) toggleTangle()
   setDocMode(!!v.doc)
+  if (!!v.night !== nightOn) toggleNight()
   const height = v.height || 'traffic', seams = v.seams || 'all'
   let rebuild = false
   if (height !== F.height) { F.height = height; rebuild = true }
@@ -668,21 +739,22 @@ function applyView(v = {}) {
   else if (cam === 'fit') fitPicked()
   else if (cam === 'fittop') fitPicked([0, 1, 0.0001])
   else if (cam === 'module' && v.select?.id) world.flyTo(view.posOf(v.select.id), 34)
-  else if (cam === 'overview') world.flyTo([0, 0, 0], view.L.extent * 1.55, 1.3)
+  else if (cam === 'overview') world.flyTo([0, 0, 0], view.L.extent * 1.15, 1.3)
+  else if (cam === 'construction') alerts.flyToConstruction()
   sfx.whoosh()
 }
 
 const ctxOfTier = (...t) => A.contexts.filter((c) => t.includes(c.tier)).map((c) => c.key)
 const PRESETS = [
-  { label: 'Overview', desc: 'everything, angled camera', v: () => ({ camera: 'overview' }) },
-  { label: 'Fix first', desc: 'contexts with FIX items, plus what they touch', v: () => ({ pick: buildInbox(A).filter((i) => i.kind === 'fix').flatMap((i) => i.view?.pick || []), isolate: 'plus', mode: 'threats', focusHide: false, camera: 'fit', tab: 'inbox' }) },
-  { label: 'Architecture diagram', desc: 'paper, top-down, section labels — best for export', v: () => ({ doc: true, labels: 'ctx', camera: 'top' }) },
-  { label: 'Data flow', desc: 'particles run along every dependency, in its direction', v: () => ({ mode: 'flow', labels: 'ctx', camera: 'overview' }) },
-  { label: 'Boundaries', desc: 'SDK ports + Rust host and every contract seam', v: () => ({ pick: ctxOfTier('sdk', 'host'), isolate: 'only', seams: 'all', camera: 'fittop' }) },
+  { label: 'Overview', desc: 'the whole metro from the air', v: () => ({ camera: 'overview' }) },
+  { label: 'Fix first', desc: 'districts with FIX quests, plus everything they touch', v: () => ({ pick: buildInbox(A).filter((i) => i.kind === 'fix').flatMap((i) => i.view?.pick || []), isolate: 'plus', mode: 'threats', focusHide: false, camera: 'fit', tab: 'inbox' }) },
+  { label: 'City plan', desc: 'white clay model from above — best for export', v: () => ({ doc: true, labels: 'ctx', camera: 'top' }) },
+  { label: 'Dirt roads only', desc: 'only the cars that break a rule stay on the road', v: () => ({ mode: 'threats', focusHide: true, camera: 'overview' }) },
+  { label: 'The river', desc: 'SDK ports, Rust host and every contract bridge', v: () => ({ pick: ctxOfTier('sdk', 'host'), isolate: 'only', seams: 'all', camera: 'fittop' }) },
   { label: 'Ports', desc: 'the SDK ring and everything that calls it', v: () => ({ pick: ctxOfTier('sdk'), isolate: 'off', focusHide: false, camera: 'overview', tab: 'ports' }) },
-  { label: 'Worst context', desc: 'the lowest-scoring context and its neighbours', v: () => ({ pick: [A.score.worst?.key].filter(Boolean), isolate: 'plus', camera: 'fit' }) },
-  { label: 'Change hotspots', desc: 'height = commits touching it, git history open', v: () => ({ height: 'churn', camera: 'overview', tab: 'history' }) },
-  { label: 'Hairball comparison', desc: 'the same graph as a generic force layout', v: () => ({ tangle: true }) },
+  { label: 'Worst district', desc: 'the lowest-scoring district and its neighbours', v: () => ({ pick: [A.score.worst?.key].filter(Boolean), isolate: 'plus', camera: 'fit' }) },
+  { label: 'Construction', desc: 'every uncommitted change — cranes, scaffolding, rubble', v: () => ({ camera: 'construction' }) },
+  { label: 'Night traffic', desc: 'every dependency as headlights', v: () => ({ night: true, camera: 'overview' }) },
 ]
 function runPreset(i) {
   const p = PRESETS[i]
@@ -765,7 +837,16 @@ function markItem(id, state) {
   H.renderRight(A, tab, curCommit)
   H.renderLeft(A, view.filters, view.sel?.type === 'ctx' ? view.sel.key : null)
 }
-$('tangleBtn').addEventListener('click', toggleTangle)
+let nightOn = false
+function toggleNight() {
+  nightOn = !nightOn
+  world.setNight(nightOn)
+  $('nightBtn').classList.toggle('on', nightOn)
+  $('nightBtn').textContent = nightOn ? '☀' : '☾'
+  sfx.toggle(nightOn)
+  H.toast(nightOn ? '<b>☾ NIGHT</b><span>windows light up · headlights show the traffic</span>' : '<b>☀ DAY</b><span>back to daylight</span>')
+}
+$('nightBtn').addEventListener('click', toggleNight)
 $('topBtn').addEventListener('click', () => { world.topView(); sfx.whoosh() })
 $('docBtn').addEventListener('click', toggleDoc)
 
@@ -819,10 +900,10 @@ $('scopeBar').addEventListener('click', (e) => { if (e.target.closest('[data-res
 $('muteBtn').addEventListener('click', () => { const m = toggleMute(); $('muteBtn').textContent = m ? '♪̸' : '♪' })
 
 // ── panels ──────────────────────────────────────────────────────────────────
-$('left').addEventListener('click', (e) => {
+function mapClick(e) {
   const F = view.filters
   const gt = e.target.closest('[data-gotab]')
-  if (gt) { tab = gt.dataset.gotab; if (document.body.classList.contains('hideR')) toggleDrawer('R'); sfx.click(); return H.renderRight(A, tab, curCommit) }
+  if (gt) { tab = gt.dataset.gotab; if (EXPLORE.includes(tab)) lastSub = tab; if (document.body.classList.contains('hideR')) toggleDrawer('R'); sfx.click(); return H.renderRight(A, tab, curCommit) }
   const pk = e.target.closest('[data-pick]')
   if (pk) { e.stopPropagation(); return togglePick(pk.dataset.pick) }
   const iso = e.target.closest('[data-iso]')
@@ -855,45 +936,57 @@ $('left').addEventListener('click', (e) => {
   sfx.toggle(true)
   view.applyState()
   H.renderLeft(A, F, view.sel?.type === 'ctx' ? view.sel.key : null)
-})
+}
 
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab === 'explore' ? lastSub : b.dataset.tab; sfx.toggle(true); H.renderRight(A, tab, curCommit) }))
 
-$('rightBody').addEventListener('click', (e) => {
-  if (e.target.closest('#replay')) return replay()
-  if (e.target.closest('[data-onboard]')) { localStorage.setItem('sprawler:onboarded', '1'); return H.renderRight(A, tab, curCommit) }
+function listClick(e) {
+  const h = (fn) => { fn(); return true }
+  if (e.target.closest('#replay')) return h(replay)
+  if (e.target.closest('[data-onboard]')) return h(() => { localStorage.setItem('sprawler:onboarded', '1'); H.renderLeft(A, view.filters, null) })
   const sb = e.target.closest('[data-sub]')
-  if (sb) { tab = lastSub = sb.dataset.sub; sfx.toggle(true); return H.renderRight(A, tab, curCommit) }
+  if (sb) return h(() => { tab = lastSub = sb.dataset.sub; sfx.toggle(true); H.renderRight(A, tab, curCommit) })
   const mk = e.target.closest('[data-mark]')
-  if (mk) { e.stopPropagation(); return markItem(mk.dataset.item, mk.dataset.mark) }
+  if (mk) return h(() => { e.stopPropagation(); markItem(mk.dataset.item, mk.dataset.mark) })
   const sh = e.target.closest('[data-show]')
-  if (sh) { e.stopPropagation(); return showItem(sh.dataset.show) }
+  if (sh) return h(() => { e.stopPropagation(); showItem(sh.dataset.show) })
   const ci = e.target.closest('[data-copyitem]')
-  if (ci) { e.stopPropagation(); return copyItem(ci.dataset.copyitem) }
+  if (ci) return h(() => { e.stopPropagation(); copyItem(ci.dataset.copyitem) })
   const wc = e.target.closest('.wchip[data-ctx]')
-  if (wc) return focusCtx(wc.dataset.ctx)
-  const srr = e.target.closest('[data-seamrow]')
-  if (srr) return selectSeam(srr.dataset.seamrow)
+  if (wc) return h(() => focusCtx(wc.dataset.ctx))
   const cp = e.target.closest('[data-copy]')
-  if (cp) { e.stopPropagation(); return copyThreat(+cp.dataset.copy) }
+  if (cp) return h(() => { e.stopPropagation(); copyThreat(+cp.dataset.copy) })
   const cr = e.target.closest('[data-copy-rule]')
-  if (cr) { e.stopPropagation(); return copyRule(cr.dataset.copyRule) }
+  if (cr) return h(() => { e.stopPropagation(); copyRule(cr.dataset.copyRule) })
   const pl = e.target.closest('[data-play]')
-  if (pl) { e.stopPropagation(); return playFlow(+pl.dataset.play) }
+  if (pl) return h(() => { e.stopPropagation(); playFlow(+pl.dataset.play) })
   const fl = e.target.closest('[data-flow]')
-  if (fl) return selectFlow(+fl.dataset.flow)
+  if (fl) return h(() => selectFlow(+fl.dataset.flow))
   const po = e.target.closest('[data-port]')
-  if (po) return selectPort(+po.dataset.port)
+  if (po) return h(() => selectPort(+po.dataset.port))
   const t = e.target.closest('[data-threat]')
-  if (t) return selectThreat(+t.dataset.threat)
+  if (t) return h(() => selectThreat(+t.dataset.threat))
   const c = e.target.closest('[data-commit]')
-  if (c) return selectCommit(+c.dataset.commit)
+  if (c) return h(() => selectCommit(+c.dataset.commit))
   const m = e.target.closest('[data-mod]')
-  if (m) return selectModule(m.dataset.mod)
-})
+  if (m) return h(() => selectModule(m.dataset.mod))
+  return false
+}
+
+function panelClick(e) {
+  if (e.target.closest('[data-gowip]')) { e.stopPropagation(); return alerts.flyToConstruction() }
+  if (e.target.closest('[data-goquests]')) { if (document.body.classList.contains('hideL')) toggleDrawer('L'); $('quests').scrollTo({ top: 0, behavior: 'smooth' }); sfx.click(); return }
+  if (listClick(e)) return
+  mapClick(e)
+}
+for (const id of ['left', 'rightBody', 'kpi', 'top']) $(id).addEventListener('click', panelClick)
 
 $('detail').addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) return clearSel()
+  const rf = e.target.closest('[data-refactor]')
+  if (rf) { const m = view.mods.get(rf.dataset.refactor); copyText(H.refactorPrompt(A, m)); sfx.chord(); return H.toast(`<b>🧹 REFACTOR PROMPT COPIED</b><span>${H.esc(m.name)}</span>`, 'gold') }
+  const ib = e.target.closest('[data-impact]')
+  if (ib) return toggleImpact(ib.dataset.impact)
   const cp = e.target.closest('[data-copy]')
   if (cp) return copyThreat(+cp.dataset.copy)
   const sl = e.target.closest('[data-sololayer]')
@@ -931,11 +1024,20 @@ canvas.addEventListener('pointermove', (e) => {
     hoverPending = null
     const hit = view.pick((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1)
     const id = hit?.type === 'module' ? hit.id : null
-    if (id !== view.hoverId) { view.hoverId = id; if (id) sfx.hover() }
+    if (id !== view.hoverId) { view.hoverId = id; view.setHover(id); if (id) sfx.hover() }
     canvas.style.cursor = hit ? 'pointer' : ''
     if (hit?.type === 'module') {
       const m = view.mods.get(hit.id), l = A.layers[m.layer] || {}
-      H.tip(`<b style="color:${l.color}">${H.esc(l.label || m.layer)}</b> · ${H.esc(view.ctxs.get(m.ctx)?.label)}<br><span class="tn">${H.esc(m.name)}</span><br><small>${m.loc} lines · in ${m.fanIn} · out ${m.fanOut}${m.violations ? ` · <span class="c-bad">⚠ ${m.violations}</span>` : ''}${m.well ? ' · <span style="color:#b388ff">◎ well</span>' : ''}</small>`, e.clientX, e.clientY)
+      const [bi, bn] = ARCH_ICON[A.wells?.includes(m.id) ? 'megatower' : ARCH[m.layer] || 'apartment'] || ['🏢', 'Building']
+      const wip = m.wip === 'new' ? ` · <span style="color:#a07800">🏗 under construction +${m.wipAdd || 0}</span>` : m.wip === 'mod' ? ` · <span style="color:#a07800">🧰 renovating</span>` : ''
+      H.tip(`${bi} <b>${H.esc(bn)}</b> · ${H.esc(l.label || m.layer)} · ${H.esc(view.ctxs.get(m.ctx)?.label)}<br><span class="tn">${H.esc(m.name)}</span><br><small>${m.loc} lines · ${m.fanIn} cars arrive · ${m.fanOut} leave${m.violations ? ` · <span class="c-bad">⚠ ${m.violations} rule break${m.violations > 1 ? 's' : ''}</span>` : ''}${wip}</small>`, e.clientX, e.clientY)
+    } else if (hit?.type === 'police') {
+      const v = A.violations[hit.vi]
+      H.tip(`🚓 <b>Pulled over</b> · ${H.esc(v.rule)}<br><span class="tn">${H.esc(H.short(v.source))}</span><br><small>click for the ticket</small>`, e.clientX, e.clientY)
+    } else if (hit?.type === 'track') {
+      const vs = A.violations.filter((v) => (v.fromCtx === hit.a && v.toCtx === hit.b) || (v.fromCtx === hit.b && v.toCtx === hit.a))
+      const rules = [...new Set(vs.map((v) => v.rule))].slice(0, 3).join(', ')
+      H.tip(`🟫 <b>Dirt road</b> · ${H.esc(view.ctxs.get(hit.a)?.label)} ⇄ ${H.esc(view.ctxs.get(hit.b)?.label)}<br><small>${hit.n} car${hit.n > 1 ? 's' : ''} cut through the woods · ${H.esc(rules)}<br>click to inspect</small>`, e.clientX, e.clientY)
     } else if (hit?.type === 'seam') {
       const s = A.seams.find((x) => x.id === hit.seam)
       const ST = { ok: '<span class="c-ok">✓ matched</span>', bad: '<span class="c-bad">✕ emitted, never handled</span>', dead: '<span style="color:#ffb020">◌ handled, never emitted</span>' }
@@ -946,7 +1048,7 @@ canvas.addEventListener('pointermove', (e) => {
     } else H.tip(null)
   })
 })
-canvas.addEventListener('pointerleave', () => { view.hoverId = null; H.tip(null) })
+canvas.addEventListener('pointerleave', () => { view.hoverId = null; view.setHover(null); H.tip(null) })
 canvas.addEventListener('pointerup', (e) => {
   if (!down || !booted) return
   const moved = Math.hypot(e.clientX - down[0], e.clientY - down[1])
@@ -955,67 +1057,189 @@ canvas.addEventListener('pointerup', (e) => {
   const hit = view.pick((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1)
   if (hit && !e.shiftKey) clearRoom()
   if (hit?.type === 'seam') selectSeam(hit.seam, hit.kind)
+  else if (hit?.type === 'police') showTicket(hit.vi)
+  else if (hit?.type === 'track') {
+    const i = A.violations.findIndex((v) => (v.fromCtx === hit.a && v.toCtx === hit.b) || (v.fromCtx === hit.b && v.toCtx === hit.a))
+    if (i >= 0) selectThreat(i)
+  }
   else if (e.shiftKey && hit) togglePick(hit.type === 'module' ? view.mods.get(hit.id).ctx : hit.key)
   else if (hit?.type === 'module') selectModule(hit.id)
   else if (hit?.type === 'ctx') focusCtx(hit.key)
   else if (view.sel) clearSel()
 })
 
-// ── search ──────────────────────────────────────────────────────────────────
-const search = $('search'), results = $('results')
-let found = []
-search.addEventListener('input', () => {
-  const q = search.value.trim().toLowerCase()
-  if (!q || !A) { results.style.display = 'none'; return }
-  const ctx = A.contexts.filter((c) => c.label.toLowerCase().includes(q) || c.key.includes(q)).slice(0, 5).map((c) => ({ t: 'ctx', key: c.key, label: c.label, sub: c.key }))
-  const mods = A.modules.filter((m) => !m.generated && (m.name.toLowerCase().includes(q) || (m.path || '').toLowerCase().includes(q))).slice(0, 12).map((m) => ({ t: 'mod', id: m.id, label: m.name, sub: H.short(m.path) }))
-  found = [...ctx, ...mods]
-  results.innerHTML = found.map((f, i) => `<div data-i="${i}" class="${i === 0 ? 'on' : ''}"><b>${f.t === 'ctx' ? '⬡' : '·'}</b>${H.esc(f.label)}<small>${H.esc(f.sub)}</small></div>`).join('') || '<div class="dim">no match</div>'
-  results.style.display = 'block'
+// ── command palette (⌘K, /) ──────────────────────────────────────────────────
+const palette = new Palette(() => {
+  if (!A) return []
+  const out = []
+  const act = (icon, label, sub, run, kbd, keys) => out.push({ group: 'Actions', icon, label, sub, run, kbd, keys, pin: true, rank: 0 })
+  act('🧭', 'Next happening', 'fly to the next construction site or news', () => alerts.next(), 'J', 'jump next event construction')
+  act('⚠', 'Next rule break', 'cycle through the dirt roads', () => nextThreat(), 'K', 'violation finding')
+  act('🏚', 'Worst district', A.score.worst ? `${A.score.worst.label} · ${A.score.worst.grade}` : '', () => A.score.worst && (clearRoom(), focusCtx(A.score.worst.key)), '', 'worst bad grade')
+  act('🏗', 'Construction sites', 'every uncommitted change', () => alerts.flyToConstruction(), '', 'wip uncommitted crane')
+  act('⏳', 'Time-lapse', 'scrub through recent commits', () => openScrub(true), 'P', 'history replay commits timeline')
+  act('🚁', 'Chopper cam', 'ride along with the news chopper', () => toggleChopper(), 'U', 'helicopter news chopper camera tour')
+  act('🦨', 'Smelliest buildings', 'long files, long and complex functions', () => { tab = lastSub = 'smells'; if (document.body.classList.contains('hideR')) toggleDrawer('R'); H.renderRight(A, tab, curCommit) }, '', 'smell long complex refactor')
+  for (const [k, L] of Object.entries(LENSES)) out.push({ group: 'Lenses', icon: L.icon, label: `Lens: ${L.label}`, sub: L.hint, run: () => setLens(k), rank: 1, keys: 'lens heatmap color ' + k })
+  if (lens) act('✕', 'Clear lens', '', () => setLens(null), 'Y', 'lens off')
+  act('📰', 'Read the paper', 'everything since your last visit', () => alerts.openPaper(true), '', 'news daily commit morning')
+  act(nightOn ? '☀' : '☾', nightOn ? 'Day' : 'Night', 'headlights and lit windows', () => toggleNight(), 'N', 'night day dark')
+  act('⬜', docMode ? 'Back to the city' : 'City plan', 'white clay model for diagrams', () => toggleDoc(), 'B', 'plan doc diagram white')
+  act('⬡', "Bird's-eye view", 'straight down over the whole map', () => { world.topView(); sfx.whoosh() }, 'V', 'top')
+  act('⤓', 'Export image / PDF', 'exactly what the camera sees', () => openExport(true), 'X', 'export png pdf screenshot')
+  act('▤', 'Tables view', 'every finding, district and module as tables', () => setAdmin(true), 'G', 'tables admin list')
+  act('👁', 'Hide the interface', 'for screenshots and presenting', () => toggleHud(), 'H', 'hud hide present')
+  act('⌂', 'Show everything', 'clear selection and isolation', () => resetView(), '0', 'reset clear')
+  act('?', 'How to read the city', 'legend and every shortcut', () => toggleHelp(true), '?', 'help legend keys')
+  PRESETS.forEach((p, i) => out.push({ group: 'Views', icon: '▦', label: p.label, sub: p.desc, kbd: String(i + 1), run: () => runPreset(i), rank: 1 }))
+  for (const c of A.contexts) out.push({ group: 'Districts', icon: '🏙', label: c.label, sub: `${c.grade} · ${c.modules} buildings${c.crit + c.major + c.minor ? ` · ⚠ ${c.crit + c.major + c.minor}` : ''}`, keys: c.key, run: () => { clearRoom(); focusCtx(c.key) }, rank: 2 })
+  for (const it of buildInbox(A)) out.push({ group: 'Quests', icon: it.kind === 'fix' ? '🔴' : it.kind === 'improve' ? '🟠' : '🔵', label: it.title, sub: `${it.count} · ${it.kind}`, run: () => showItem(it.id), rank: 3 })
+  for (const s of A.seams || []) out.push({ group: 'Bridges', icon: s.unhandled.length ? '⛔' : '🌉', label: `${s.id} bridge`, sub: s.unhandled.length ? `${s.unhandled.length} kinds out` : 'in sync', run: () => selectSeam(s.id), rank: 4 })
+  ;(A.flows || []).forEach((f, i) => out.push({ group: 'Use cases', icon: f.kind === 'command' ? '🚚' : '🚐', label: f.id, sub: 'play the delivery route', run: () => playFlow(i), rank: 5 }))
+  for (const m of A.modules) if (!m.generated) out.push({ group: 'Buildings', icon: '🏢', label: m.name, sub: H.short(m.path), keys: m.path, run: () => { clearRoom(); selectModule(m.id) }, rank: 6 })
+  return out
 })
-function pickFound(i) {
-  const f = found[i]
-  if (!f) return
-  results.style.display = 'none'
-  search.value = ''
-  search.blur()
-  clearRoom()
-  f.t === 'ctx' ? focusCtx(f.key) : selectModule(f.id)
+const search = $('search')
+search.addEventListener('mousedown', (e) => { e.preventDefault(); palette.open() })
+search.addEventListener('focus', () => { search.blur(); palette.open() })
+function nextThreat() {
+  if (!A.violations.length) return
+  const cur = view.sel?.type === 'edge' ? A.violations.findIndex((v) => view.edgeIndex(v.source, v.target) === view.sel.idx) : -1
+  selectThreat((cur + 1) % A.violations.length)
 }
-search.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') pickFound(0)
-  if (e.key === 'Escape') { search.value = ''; results.style.display = 'none'; search.blur() }
-  e.stopPropagation()
+
+// ── data lenses ─────────────────────────────────────────────────────────────
+let lens = null
+function setLens(key) {
+  lens = key && LENSES[key] ? key : null
+  const info = view.setLens(lens)
+  renderLensBar(info)
+  sfx.toggle(!!lens)
+}
+function renderLensBar(info) {
+  const el = $('lensbar')
+  if (!el.dataset.built) {
+    el.dataset.built = '1'
+    el.addEventListener('click', (e) => { const b = e.target.closest('[data-lens]'); if (b) setLens(b.dataset.lens === lens ? null : b.dataset.lens) })
+  }
+  const fmt = (v) => (info?.fmt ? info.fmt(v) : Math.round(v).toLocaleString())
+  el.innerHTML = `<div class="lb2">${Object.entries(LENSES).map(([k, L]) => `<button data-lens="${k}" class="${k === lens ? 'on' : ''}" title="${H.esc(L.hint)}">${L.icon} ${L.label}</button>`).join('')}<button data-lens="" class="off" title="clear (Y)">✕</button></div>
+    ${info ? `<div class="lg"><span>${fmt(info.min)}</span><i></i><span>${fmt(info.max)} ${H.esc(info.unit)}</span><small>${H.esc(info.hint)} · colours are percentiles across ${info.n} files</small></div>` : ''}`
+  el.classList.toggle('active', !!lens)
+}
+function toggleLensBar() {
+  const el = $('lensbar')
+  const open = el.classList.toggle('open')
+  if (open) renderLensBar(lens ? view.setLens(lens) : null)
+  else if (lens) setLens(null)
+  syncDock()
+}
+
+// ── chopper cam ─────────────────────────────────────────────────────────────
+let chopperOn = false
+function toggleChopper(on = !chopperOn) {
+  chopperOn = on
+  document.body.classList.toggle('chopper', on)
+  if (on) {
+    clearSel()
+    world.setFollow(() => view.chopper?.cam())
+    view.chopper.onStory = (s) => { $('lowerThird').innerHTML = s ? `<b>LIVE</b><span class="ch">HEX 7 NEWS</span><span class="hl">${s.icon || ''} ${H.esc(s.label || '')}</span>` : '' }
+    view.chopper.onStory(view.chopper.story)
+    sfx.whoosh()
+  } else {
+    world.setFollow(null)
+    view.chopper && (view.chopper.onStory = null)
+  }
+  syncDock()
+}
+world.onFollowEnd = () => { if (chopperOn) { chopperOn = false; document.body.classList.remove('chopper'); syncDock() } }
+
+// ── hide the interface, dock, collapsible quests, deep links, tour ──────────
+function toggleHud() { document.body.classList.toggle('nohud'); sfx.toggle(!document.body.classList.contains('nohud')) }
+function setDock(name) {
+  const open = !document.body.classList.contains('hideR')
+  const cur = H.curTab()
+  const curDock = ['flows', 'ports', 'trace', 'trophies'].includes(cur) ? 'flows' : cur
+  if (open && curDock === name) { toggleDrawer('R'); syncDock(); return }
+  tab = name === 'flows' ? lastSub : name
+  H.renderRight(A, tab, curCommit)
+  if (!open) toggleDrawer('R')
+  syncDock()
+}
+function syncDock() {
+  const open = !document.body.classList.contains('hideR')
+  const cur = H.curTab()
+  const curDock = ['flows', 'ports', 'trace', 'trophies'].includes(cur) ? 'flows' : cur
+  document.querySelectorAll('#dock [data-dock]').forEach((b) => b.classList.toggle('on', b.dataset.dock === 'lens' ? $('lensbar').classList.contains('open') : b.dataset.dock === 'chopper' ? chopperOn : b.dataset.dock === 'hud' ? false : open && b.dataset.dock === curDock))
+}
+$('dock').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dock]')
+  if (!b) return
+  if (b.dataset.dock === 'hud') return toggleHud()
+  if (b.dataset.dock === 'lens') return toggleLensBar()
+  if (b.dataset.dock === 'chopper') return toggleChopper()
+  setDock(b.dataset.dock)
+  sfx.click()
 })
-results.addEventListener('mousedown', (e) => { const d = e.target.closest('[data-i]'); if (d) pickFound(+d.dataset.i) })
-search.addEventListener('blur', () => setTimeout(() => { results.style.display = 'none' }, 150))
+document.body.classList.add('hideR')
+try { if (localStorage.getItem('sprawler:qmin') === '1') document.body.classList.add('qmin') } catch { /* */ }
+$('questHead').addEventListener('click', () => {
+  const on = document.body.classList.toggle('qmin')
+  try { localStorage.setItem('sprawler:qmin', on ? '1' : '0') } catch { /* */ }
+  sfx.toggle(!on)
+})
+// selection lives in the URL so a link takes a teammate to the same building
+function syncHash() {
+  const s = view.sel
+  const h = s?.type === 'module' ? '#b=' + encodeURIComponent(s.id) : s?.type === 'ctx' ? '#d=' + encodeURIComponent(s.key) : ''
+  if (location.hash !== h) history.replaceState(null, '', h || location.pathname + location.search)
+}
+function restoreHash() {
+  const m = location.hash.match(/^#([bd])=(.+)$/)
+  if (!m) return false
+  const id = decodeURIComponent(m[2])
+  if (m[1] === 'b' && view.mods.has(id)) { clearRoom(); selectModule(id); return true }
+  if (m[1] === 'd' && view.ctxs.has(id)) { clearRoom(); focusCtx(id); return true }
+  return false
+}
+function maybeTour() {
+  try { if (localStorage.getItem('sprawler:toured')) return } catch { return }
+  runTour([
+    { target: '#kpi', title: 'Your city at a glance', body: 'The <b>city rating</b> is your architecture score. <b>Dirt roads</b> are rule breaks, <b>construction</b> is uncommitted work, and every <b>car</b> is one dependency. Arrows show what changed since the last scan.' },
+    { target: '#left', title: 'Quests are rule breaks', body: 'Work top to bottom, <b>FIX</b> first. <b>▶ Show</b> flies you to the dirt road; <b>⧉ Agent fix</b> copies a fix prompt with file, line and code.' },
+    { target: () => document.querySelector('.dsign:not(.dim)'), title: 'Click anything', body: 'Click a district or building to inspect it — its dependencies light up as lanes along the real roads: <b style="color:#2f6bff">blue</b> going out, <b style="color:#14a39a">teal</b> coming in, <b style="color:#e0483b">red</b> for rule breaks.' },
+    { target: '#search', title: 'Jump anywhere', body: 'Press <b>⌘K</b> to find any district, building, quest or use case, or run a command. <b>J</b> visits whatever is happening, <b>?</b> explains everything.' },
+  ], () => { try { localStorage.setItem('sprawler:toured', '1') } catch { /* */ } })
+}
 
 // ── keys ────────────────────────────────────────────────────────────────────
 addEventListener('keydown', (e) => {
-  if (!booted || setupOpen() || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return
+  if (!booted || setupOpen() || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || palette.isOpen) return
   const k = e.key.toLowerCase()
+  if ((e.metaKey || e.ctrlKey) && k !== 'k') return
   if (adminOn) { if (k === 'g' || k === 'escape') setAdmin(false); return }
   if (k === 'g') return setAdmin(true)
-  if (k === '/') { e.preventDefault(); search.focus() }
+  if ((k === 'k' && (e.metaKey || e.ctrlKey)) || k === '/') { e.preventDefault(); return palette.open() }
+  if (k === 'h') return toggleHud()
   else if (k === 'escape') {
     if ($('helpModal').classList.contains('open')) toggleHelp(false)
     else if ($('viewsMenu').classList.contains('open')) toggleViews(false)
     else if ($('exportModal').classList.contains('open')) openExport(false)
+    else if ($('scrub').classList.contains('open')) closeScrub()
     else if (view.sel) clearSel()
     else if (view.filters.picked.size || view.filters.isolate !== 'off' || tangled) resetView(false)
     else overview()
   }
   else if (k === '0') resetView()
   else if (/^[1-9]$/.test(k)) runPreset(+k - 1)
-  else if (k === '?' || k === 'h') toggleHelp()
-  else if (k === 't') toggleTangle()
+  else if (k === '?') toggleHelp()
   else if (k === 'o') overview()
   else if (k === 'v') { world.topView(); sfx.whoosh() }
   else if (k === 'b') toggleDoc()
   else if (k === 'x') openExport(!$('exportModal').classList.contains('open'))
   else if (k === 'l') { view.filters.labels = { all: 'ctx', ctx: 'tier', tier: 'all' }[view.filters.labels]; sfx.toggle(view.filters.labels === 'all'); refreshFilters() }
   else if (k === '[') toggleDrawer('L')
-  else if (k === ']') toggleDrawer('R')
+  else if (k === ']') { toggleDrawer('R'); syncDock() }
   else if (k === 'f') fitPicked()
   else if (k === 'i') setIsolate({ off: 'only', only: 'plus', plus: 'off' }[view.filters.isolate])
   else if (k === 'p') { tab = 'history'; H.renderRight(A, tab, curCommit); replay() }
@@ -1025,11 +1249,12 @@ addEventListener('keydown', (e) => {
     if (i >= 0) copyThreat(i)
   }
   else if (k === 'r' && !isStatic) { fetch('/api/rescan', { method: 'POST' }); H.toast('<b>RESCAN REQUESTED</b><span>re-running graphify + judge</span>') }
-  else if (k === 'n') {
-    if (!A.violations.length) return
-    const cur = view.sel?.type === 'edge' ? A.violations.findIndex((v) => view.edgeIndex(v.source, v.target) === view.sel.idx) : -1
-    selectThreat((cur + 1) % A.violations.length)
-  }
+  else if (k === 'n') toggleNight()
+  else if (k === 'j') alerts.next()
+  else if (k === 'k') nextThreat()
+  else if (k === 'd' && view.sel?.type === 'module') toggleImpact(view.sel.id)
+  else if (k === 'u') toggleChopper()
+  else if (k === 'y') setLens(lens ? null : 'smell')
 })
 
 window.__hex = { world, view }

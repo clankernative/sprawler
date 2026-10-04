@@ -1,5 +1,5 @@
 // DOM HUD: score, legend/filters, contexts, threats/history/trophies, detail cards, toasts.
-import { GRADE } from './atlas.js'
+import { GRADE, ARCH, ARCH_ICON } from './city/CityView.js'
 import { buildInbox, loadMarks, status, visible, summarize } from './inbox.js'
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
@@ -19,13 +19,53 @@ export function ago(ts) {
 
 let SEAM = 'all'
 export function setSeamMode(m) { SEAM = m }
+export const curTab = () => CUR_TAB
 
 export function renderTop(A) {
   const p = A.project
   $('proj').textContent = p.title
-  $('head').innerHTML = p.repos
-    ? p.repos.map((r) => `${esc(r.repo)} <b>${esc(r.sha || '—')}</b>${r.dirty ? `<span class="warn">*</span>` : ''}`).join(' · ')
-    : `HEAD <b>${esc(p.sha || '—')}</b>${p.branch ? ` · ${esc(p.branch)}` : ''}${p.dirty ? ` · <span class="warn">${p.dirty} dirty</span>` : ''}`
+  const w = A.wip || {}
+  const heads = p.repos
+    ? p.repos.map((r) => `<span class="chipx">${esc(r.repo)} <b>${esc(r.sha || '—')}</b></span>`).join('')
+    : `<span class="chipx">${p.branch ? `⑂ ${esc(p.branch)}` : 'HEAD'} <b>${esc(p.sha || '—')}</b></span>`
+  const sites = (w.new || 0) + (w.mod || 0) + (w.demolished?.length || 0)
+  $('head').innerHTML = heads + (sites ? `<span class="chipx wip" data-gowip title="uncommitted work — click to fly to the construction">🏗 ${sites} under construction${w.violations ? ` · <b style="color:#c0392b">${w.violations} unpermitted</b>` : ''}</span>` : (p.dirty ? `<span class="chipx">${p.dirty} dirty</span>` : ''))
+}
+
+// headline numbers across the top-left, each with the change since the scan before
+export function renderKPI(A, prev) {
+  const s = A.score, sum = summarize(A), w = A.wip || {}
+  const d = prev ? +(s.total - prev.score.total).toFixed(1) : 0
+  const delta = (v, invert) => (!v ? '' : `<span class="${(v > 0) !== !!invert ? 'up' : 'down'}">${v > 0 ? '▲' : '▼'}${Math.abs(v)}</span>`)
+  const viol = A.violations.length
+  const dv = prev ? viol - prev.violations.length : 0
+  const tracks = new Set(A.violations.filter((v) => v.fromCtx && v.toCtx && v.fromCtx !== v.toCtx).map((v) => [v.fromCtx, v.toCtx].sort().join('|'))).size
+  const cars = A.edges.filter((e) => !e.seam && !e.test).length
+  const hw = A.edges.filter((e) => e.status === 'cross').length
+  const sites = (w.new || 0) + (w.mod || 0) + (w.demolished?.length || 0)
+  const g = s.withheld ? '?' : s.grade
+  $('kpi').innerHTML = `
+    <div class="kc card rating click" data-gotab="trophies" title="city rating = architecture health">
+      <div class="gbadge" style="--g:${GRADE[g] || GRADE['?']}">${g}</div>
+      <div style="flex:1"><div class="kl">City rating</div><div class="kv"><span id="scoreNum">${s.total}</span><small>/100</small> ${delta(d)}</div>
+      <div class="xp"><s style="width:${pct(s.xp / Math.max(1, s.xpMax))}"></s></div><div class="ks">${s.xp} / ${s.xpMax} XP · ${A.achievements.filter((a) => a.earned).length} trophies</div></div>
+    </div>
+    <div class="kc card dirt click ${sum.fix ? 'bad' : ''}" data-goquests title="rule breaks, as quests">
+      <div class="kl">🟫 Dirt roads</div><div class="kv">${viol} ${delta(dv, true)}</div>
+      <div class="pips"><span style="--c:#e0483b">${sum.fix} fix</span><span style="--c:#e39a2d">${sum.improve} improve</span><span style="--c:#2f6bff">${sum.check} check</span></div>
+    </div>
+    <div class="kc card build click" data-gowip title="uncommitted work in the working tree">
+      <div class="kl">🏗 Construction</div><div class="kv">${sites}<small>sites</small></div>
+      <div class="ks">${sites ? `<span class="up">+${w.added || 0}</span> <span class="down">−${w.deleted || 0}</span> lines${w.violations ? ` · <b style="color:#c0392b">${w.violations} unpermitted</b>` : ''}` : 'all work committed'}</div>
+    </div>
+    <div class="kc card" title="one car per dependency">
+      <div class="kl">🚗 Traffic</div><div class="kv">${cars.toLocaleString()}<small>cars</small></div>
+      <div class="ks">${pct(hw / Math.max(1, cars))} on highways · ${tracks} dirt road${tracks === 1 ? '' : 's'}</div>
+    </div>
+    <div class="kc card click" ${s.worst ? `data-ctx="${esc(s.worst.key)}"` : ''} title="districts = bounded contexts">
+      <div class="kl">🏙 Districts</div><div class="kv">${A.contexts.length}</div>
+      <div class="ks">${s.worst ? `worst: <b>${esc(s.worst.label)}</b> ${s.worst.grade}` : '—'}</div>
+    </div>`
 }
 
 export function setLive(state, text) {
@@ -43,14 +83,25 @@ document.addEventListener('toggle', (e) => {
 }, true)
 export function openSec(k) { OPEN.add(k) }
 const sec = (k, title, sub, body) => `<details class="lsec" data-sec="${esc(k)}" ${OPEN.has(k) ? 'open' : ''}><summary>${title}${sub ? ` <small>${sub}</small>` : ''}</summary>${body}</details>`
-export const KIND = { fix: ['FIX', '#ff2e4d'], improve: ['IMPROVE', '#ffd166'], check: ['CHECK', '#4cc9ff'] }
+export const KIND = { fix: ['FIX', '#e0483b'], improve: ['IMPROVE', '#e39a2d'], check: ['CHECK', '#2f6bff'] }
 const KIND_HEAD = {
-  fix: 'FIX — breaks the architecture or fails at runtime',
-  improve: 'IMPROVE — works, but the design is drifting',
-  check: "CHECK — maybe a problem, or something the map can't see",
+  fix: 'Fix — breaks the architecture or fails at runtime',
+  improve: 'Improve — works, but the city is sprawling',
+  check: "Check — maybe a problem, or something the map can't see",
 }
 
+let LAST_F = null, LAST_SEL = null, CUR_TAB = 'explore'
 export function renderLeft(A, F, selKey) {
+  LAST_F = F; LAST_SEL = selKey
+  const items = buildInbox(A), marks = loadMarks(A)
+  const open = items.filter((it) => visible(status(it, marks)))
+  const fix = open.filter((i) => i.kind === 'fix').length
+  $('questCount').innerHTML = `${open.length} open${fix ? `<em>${fix} fix</em>` : ''}`
+  $('quests').innerHTML = renderInbox(A, items, marks)
+  if (CUR_TAB === 'map') $('rightBody').innerHTML = renderMap(A, F, selKey)
+}
+
+function renderMap(A, F, selKey) {
   const s = A.score
   const tierRows = A.tiers.map((t) => {
     const n = A.modules.filter((m) => m.tier === t.id).length
@@ -59,7 +110,7 @@ export function renderLeft(A, F, selKey) {
   const used = new Map()
   for (const m of A.modules) used.set(m.layer, (used.get(m.layer) || 0) + 1)
   const layerRows = Object.entries(A.layers).filter(([k]) => used.has(k)).map(([k, l]) =>
-    `<div class="row tog ${F.layers.has(k) ? 'off' : ''}" data-layer="${k}"><b style="color:${l.color}">${GLYPH[l.shape] || '●'}</b><span>${esc(l.label)}</span><em>${used.get(k)}</em></div>`).join('')
+    `<div class="row tog ${F.layers.has(k) ? 'off' : ''}" data-layer="${k}" title="${esc(ARCH_ICON[ARCH[k]]?.[1] || '')}"><b>${ARCH_ICON[ARCH[k] || 'apartment']?.[0] || '●'}</b><span>${esc(l.label)} <small class="dim">· ${esc((ARCH_ICON[ARCH[k] || 'apartment']?.[1] || '').toLowerCase())}</small></span><em>${used.get(k)}</em></div>`).join('')
   const ctxRows = A.tiers.map((t) => {
     const list = A.contexts.filter((c) => c.tier === t.id).sort((a, b) => a.score - b.score)
     if (!list.length) return ''
@@ -77,17 +128,7 @@ export function renderLeft(A, F, selKey) {
   const seamBody = seams.length ? `<div class="pickbar">${[['off', 'hide seams'], ['miss', 'only mismatched kinds'], ['all', 'every matched protocol link']].map(([m, t]) => `<button data-seam="${m}" title="${t}" class="${F.seams === m ? 'on' : ''}">${m === 'miss' ? 'MISMATCHES' : m.toUpperCase()}</button>`).join('')}</div>
     ${seams.map((x) => { const bad = x.unhandled.length, dead = x.dead.length; return `<div class="row seamrow ${bad ? 'bad' : dead ? 'dead' : 'ok'}" data-seamrow="${esc(x.id)}" title="click for the full seam card"><b>⇄</b><span><u>${esc(x.id)}</u><small>${esc(x.label.split('·')[1] || x.label)}</small></span>${bad ? `<em class="hot">✕${bad}</em>` : ''}${dead ? `<em class="warm">◌${dead}</em>` : ''}<em class="ok">${x.matched.length}✓</em><em class="st">${bad ? 'BROKEN' : dead ? 'CHECK' : 'IN SYNC'}</em></div>` }).join('')}` : ''
   const inSync = seams.filter((x) => !x.unhandled.length && !x.dead.length).length
-  $('left').innerHTML = `
-    <div class="score">
-      <div class="grade" style="color:${s.withheld ? '#5c6773' : GRADE[s.grade]};text-shadow:0 0 24px ${s.withheld ? 'transparent' : GRADE[s.grade]}" title="${s.withheld ? 'grade withheld: confidence too low to back it up' : ''}">${s.withheld ? '?' : s.grade}</div>
-      <div class="sc"><div class="big"><span id="scoreNum">${s.total}</span><small>/100</small></div>
-        <div class="lbl">${esc(s.label || 'ARCHITECTURE HEALTH')}${s.withheld ? ' · NOT ENOUGH EVIDENCE' : ''}</div>
-        <div class="xp"><s style="width:${pct(s.xp / Math.max(1, s.xpMax))}"></s></div>
-        <div class="lbl">${s.xp} / ${s.xpMax} XP</div></div>
-    </div>
-    <div class="fsum" data-gotab="inbox" title="open the inbox">
-      <span style="--c:#ff2e4d"><b>${sum.fix}</b>to fix</span><span style="--c:#ffd166"><b>${sum.improve}</b>to improve</span><span style="--c:#4cc9ff"><b>${sum.check}</b>to check</span></div>
-    ${s.worst ? `<div class="row ctx worst" data-ctx="${s.worst.key}"><b class="gr" style="color:${GRADE[s.worst.grade]}">${s.worst.grade}</b><span>worst: ${esc(s.worst.label)}</span><em>${s.worst.score}</em></div>` : ''}
+  return `<div class="note">Tiers are rings of the city; districts are bounded contexts. Click to hide, pick districts to isolate them.</div>
     ${sec('stats', 'NUMBERS', `confidence ${pct(s.confidence ?? 1)}`, `<div class="stats">
       <div><b>${A.modules.length}</b><span>modules</span></div>
       <div><b>${s.edges}</b><span>deps</span></div>
@@ -102,14 +143,12 @@ export function renderLeft(A, F, selKey) {
     ${s.evidence?.csharp ? `<div class="note" title="C# names resolved by Roslyn · files with no recognised role · projects without dotnet restore">C# ${s.evidence.csharp.failed ? 'analysis FAILED' : `names resolved ${pct(s.evidence.csharp.resolution)}`} · ${s.evidence.csharp.unclassified} unclassified files · ${s.evidence.csharp.unrestored} unrestored projects</div>` : ''}
     <div class="note" title="dropped Rust refs ${s.unknown?.dropped ?? 0} · unresolved imports ${s.unknown?.unresolved ?? 0} · phantom bindings ${s.unknown?.phantoms ?? 0}">confidence ${pct(s.confidence ?? 1)} · ${s.unknown?.dropped ?? 0} dropped · ${s.unknown?.phantoms ?? 0} phantom</div>`)}
     ${sec('display', 'DISPLAY', 'height · labels · filters', `
-      <div class="sub">ISLAND HEIGHT</div>
-      <div class="pickbar">${[['traffic', 'incoming links'], ['size', 'lines of code'], ['churn', 'commits touching it'], ['flat', 'no height']].map(([h, t]) => `<button data-height="${h}" title="${t}" class="${F.height === h ? 'on' : ''}">${h.toUpperCase()}</button>`).join('')}</div>
       <div class="sub">LABELS <small>L cycles · tier names always stay</small></div>
       <div class="pickbar">${[['all', 'tiers, contexts and modules'], ['ctx', 'tier + context names only'], ['tier', 'tier names only']].map(([m, t]) => `<button data-labmode="${m}" title="${t}" class="${F.labels === m ? 'on' : ''}">${{ all: 'ALL', ctx: 'SECTIONS', tier: 'TIERS' }[m]}</button>`).join('')}</div>
       <div class="row tog ${F.focusHide ? '' : 'off'}" data-toggle="focusHide"><b>◎</b><span>Selection hides unrelated</span><em>${F.focusHide ? 'ON' : 'OFF'}</em></div>
       <div class="row tog ${F.tests ? '' : 'off'}" data-toggle="tests"><b>▣</b><span>Show test suites</span><em>${F.tests ? 'ON' : 'OFF'}</em></div>
       <div class="row tog ${F.generated ? '' : 'off'}" data-toggle="generated"><b>▣</b><span>Show generated handles</span><em>${F.generated ? 'ON' : 'OFF'}</em></div>`)}
-    ${sec('tiers', 'TIERS & LAYERS', 'click to hide', tierRows + '<div class="sub">LAYERS <small>shape · colour</small></div>' + layerRows)}
+    ${sec('tiers', 'TIERS & LAYERS', 'click to hide', tierRows + '<div class="sub">BUILDINGS <small>one type per layer</small></div>' + layerRows)}
     ${seams.length ? sec('seams', 'CONTRACT SEAMS', `${inSync}/${seams.length} in sync`, seamBody) : ''}
     ${sec('contexts', esc(A.project.contextLabel || 'BOUNDED CONTEXTS'), `${A.contexts.length} · ☐ pick · ⇧click map`, `
       <div class="pickbar"><span>${F.picked?.size || 0} picked</span>
@@ -138,15 +177,15 @@ function itemCard(A, it, st) {
 
 function renderInbox(A, items, marks) {
   let html = ''
-  if (!localStorage.getItem('sprawler:onboarded')) {
-    html += `<div class="onboard"><b>START HERE</b><ol><li>Work top to bottom — <b style="color:#ff2e4d">FIX</b> first.</li><li><b>▶ SHOW</b> loads the right view for an item.</li><li><b>⧉ AGENT FIX</b> copies a fix prompt with file:line and code.</li></ol><small>Ready-made views live under <b>▦ VIEWS</b> (keys 1–9). Press <b>?</b> for every shortcut.</small><button data-onboard>GOT IT</button></div>`
+  if (false) {
+    html += `<div class="onboard"><b>Welcome to the city.</b><ol><li>Every quest is a rule break — <b style="color:#e0483b">FIX</b> ones first.</li><li><b>▶ SHOW</b> flies you to the dirt road or building.</li><li><b>⧉ AGENT FIX</b> copies a fix prompt with file:line and code.</li></ol><small>Press <b>?</b> to learn how to read the city.</small><button data-onboard>Got it</button></div>`
   }
   const open = [], hidden = []
   for (const it of items) {
     const st = status(it, marks)
     ;(visible(st) ? open : hidden).push([it, st])
   }
-  if (!open.length) html += '<div class="clear">◈ INBOX ZERO<br><small>nothing left to look at</small></div>'
+  if (!open.length) html += '<div class="clear">🌳 No quests<br><small>every road is paved — nothing left to fix</small></div>'
   let last = null
   for (const [it, st] of open) {
     if (it.kind !== last) { last = it.kind; html += `<div class="ksec" style="--c:${KIND[it.kind][1]}">${KIND_HEAD[it.kind]}</div>` }
@@ -171,18 +210,17 @@ export function detailItem(A, it) {
     ${n ? breaks(A, it.findings.map((i) => A.violations[i]), 20) : ''}`
 }
 
-const EXPLORE = ['flows', 'ports', 'trophies']
+const EXPLORE = ['flows', 'ports', 'smells', 'trophies']
 export function renderRight(A, tab, cur) {
-  if (tab === 'threats') tab = 'inbox'
+  // the inbox lives in the Quests panel now; asking for it re-renders that and keeps the right on Explore
+  if (tab === 'threats' || tab === 'inbox' || tab === 'explore') { if (tab !== 'explore') renderLeft(A, LAST_F, LAST_SEL); tab = EXPLORE.includes(CUR_TAB) ? CUR_TAB : 'flows' }
+  CUR_TAB = tab
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab || (b.dataset.tab === 'explore' && EXPLORE.includes(tab))))
-  const items = buildInbox(A), marks = loadMarks(A)
-  const open = items.filter((it) => visible(status(it, marks)))
-  $('tabInbox').innerHTML = `INBOX <em class="${open.some((i) => i.kind === 'fix') ? 'hot' : open.length ? 'warm' : 'ok'}">${open.length}</em>`
   let html = ''
-  if (tab === 'inbox') html = renderInbox(A, items, marks)
+  if (tab === 'map') html = LAST_F ? renderMap(A, LAST_F, LAST_SEL) : ''
   else if (EXPLORE.includes(tab)) {
     const earned = A.achievements.filter((a) => a.earned).length
-    html = `<div class="subtabs">${[['flows', `${esc(ucLabel(A).toUpperCase())} ${(A.flows || []).length}`], ['ports', `${esc(ifLabel(A).toUpperCase())} ${(A.ports || []).length}`], ['trophies', `★ ${earned}/${A.achievements.length}`]].map(([k, l]) => `<button data-sub="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`
+    html = `<div class="subtabs">${[['flows', `${esc(ucLabel(A).toUpperCase())} ${(A.flows || []).length}`], ['ports', `${esc(ifLabel(A).toUpperCase())} ${(A.ports || []).length}`], ['smells', `🦨 ${A.smells?.files || 0}`], ['trophies', `★ ${earned}/${A.achievements.length}`]].map(([k, l]) => `<button data-sub="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`
     if (tab === 'flows') {
       html += `<div class="note">${esc(ucLabel(A))}: ${(A.views?.use_cases?.stages || []).map((x) => esc(x.label.toLowerCase())).join(' → ')}. ▶ plays it.</div>`
       let last = null
@@ -199,12 +237,17 @@ export function renderRight(A, tab, cur) {
       html += P.map((p, i) => `<div class="flow" data-port="${i}"><b style="color:#4cc9ff">◆</b><span>${esc(p.name)}</span>
         ${p.callers.length ? `<em title="apps using it">${p.apps}▣</em><em title="callers">${p.callers.length}</em>` : '<em class="warm">unused</em>'}
         <em title="implementers" style="color:#ff9f1c">${p.implementers.length ? '⚙' + p.implementers.length + ((p.verified || []).length ? '✓' : '') : ''}</em></div>`).join('')
+    } else if (tab === 'smells') {
+      const L = A.smells?.limits || {}
+      const list = A.modules.filter((m) => m.metrics?.smells?.length).sort((a, b) => (b.metrics.smell - a.metrics.smell) || (b.loc - a.loc))
+      html += `<div class="note">Files past the limits: ${L.longFile} lines, ${L.longFn}-line functions, complexity ${L.complexFn}. Worst first — they're the stained buildings with stink lines. Not part of the score.</div>`
+      html += list.slice(0, 120).map((m) => `<div class="flow smellrow" data-mod="${esc(m.id)}"><b style="background:${m.metrics.smell >= 0.6 ? '#fde8e6' : m.metrics.smell >= 0.3 ? '#fff1d9' : '#f1f1ee'}">${m.metrics.smell >= 0.6 ? '🦨' : m.metrics.smell >= 0.3 ? '💨' : '·'}</b><span>${esc(m.name)}<small>${m.metrics.smells.map((s) => SMELL_TXT[s]?.[1] || s).join(' · ')}</small></span><em>${m.loc}</em></div>`).join('') || '<div class="clear">🌸 Nothing smells</div>'
     } else {
       html += A.achievements.map((a) => `<div class="troph ${a.earned ? 'got' : ''}">
         <b>${a.earned ? '★' : '☆'}</b><div><div class="tt">${esc(a.title)}</div><small>${esc(a.desc)}</small></div><em>${a.xp} XP</em></div>`).join('')
     }
   } else {
-    html = `<div class="hbar"><button id="replay">▶ REPLAY</button><small>click a commit to light up its blast radius</small></div>`
+    html = `<div class="hbar"><button id="replay">⏳ TIME-LAPSE</button><small>click a commit to see which buildings it touched</small></div>`
     html += A.history.map((c, i) => `<div class="commit ${cur === i ? 'on' : ''}" data-commit="${i}">
       <div class="cs">${esc(c.subject)}</div>
       <div class="cm"><b>${esc(c.short)}</b> ${esc(c.author)} · ${ago(c.ts)} <span class="add">+${c.add}</span> <span class="del">−${c.del}</span>
@@ -230,18 +273,59 @@ function breaks(A, v, max) {
     }).join('') + (v.length > max ? `<div class="more">+${v.length - max} more in the INBOX</div>` : '') + '</div>'
 }
 
+const SMELL_TXT = { longFile: ['📏', 'long file'], longFn: ['📜', 'long function'], complexFn: ['🌀', 'complex function'], deepNest: ['🪆', 'deep nesting'], todos: ['📝', 'many TODOs'], busFactor: ['🚌', 'one author'] }
+// health block: each metric as a bar against its smell limit
+function health(A, m) {
+  const x = m.metrics
+  if (!x || x.cc == null) return ''
+  const L = A.smells?.limits || {}
+  const nestLim = m.lang === 'roc' ? 10 : m.lang === 'rs' ? 9 : L.deepNest || 6
+  const bar = (label, v, lim, sub) => {
+    const f = Math.min(1, v / (lim * 2)), bad = v >= lim
+    return `<div class="hb ${bad ? 'bad' : ''}"><span>${label}</span><u><s style="width:${Math.max(2, f * 100)}%"></s><i style="left:50%"></i></u><em>${v}</em>${sub ? `<small>${sub}</small>` : ''}</div>`
+  }
+  const chips = (x.smells || []).map((s) => `<span class="chip" style="--c:#9a7b2a">${SMELL_TXT[s]?.[0] || ''} ${SMELL_TXT[s]?.[1] || s}</span>`).join('')
+  return `<div class="sec">HEALTH <small>${x.smell >= 0.4 ? '🦨 smells — the building is stained and has stink lines' : x.smells?.length ? 'a little past the limits' : 'within every limit'}</small></div>
+    ${chips ? `<div class="chips" style="margin-bottom:6px">${chips}</div>` : ''}
+    ${bar('Lines', m.loc, L.longFile || 500)}
+    ${bar('Longest function', x.fnMax, L.longFn || 60, x.fnName ? `${esc(x.fnName)} · L${x.fnLine}` : '')}
+    ${bar('Worst complexity', x.ccMax, L.complexFn || 15, x.ccFn ? `${esc(x.ccFn)} · L${x.ccLine}` : '')}
+    ${bar('Nesting depth', x.nest, nestLim)}
+    <div class="stats s4 mini"><div><b>${x.fns}</b><span>functions</span></div><div><b>${x.churn}</b><span>commits</span></div><div><b>${x.authors || '—'}</b><span>authors</span></div><div><b>${x.age == null ? '—' : Math.round(x.age) + 'd'}</b><span>last change</span></div></div>
+    ${x.smell >= 0.2 ? `<button class="bigcp ghost" data-refactor="${esc(m.id)}">🧹 Copy a refactor prompt</button>` : ''}`
+}
+
+export function refactorPrompt(A, m) {
+  const x = m.metrics || {}
+  const L = A.smells?.limits || {}
+  const asks = []
+  if (x.fnMax >= (L.longFn || 60)) asks.push(`- \`${x.fnName}\` (line ${x.fnLine}) is ${x.fnMax} lines. Split it into well-named helpers of at most ~40 lines each.`)
+  if (x.ccMax >= (L.complexFn || 15) && x.ccFn !== x.fnName) asks.push(`- \`${x.ccFn}\` (line ${x.ccLine}) has a cyclomatic complexity of about ${x.ccMax}. Flatten it: early returns, extract each branch arm, table-driven dispatch where it fits.`)
+  else if (x.ccMax >= (L.complexFn || 15)) asks.push(`- It also has a cyclomatic complexity of about ${x.ccMax}; extract the branch arms while you split it.`)
+  if (m.loc >= (L.longFile || 500)) asks.push(`- The file is ${m.loc} lines. Move cohesive groups of functions into sibling modules of the same layer (keep the public surface unchanged).`)
+  if ((x.smells || []).includes('deepNest')) asks.push(`- Nesting reaches ${x.nest} levels; invert conditions and extract inner blocks.`)
+  return [`# Refactor ${m.path}`, '', `Repository root: \`${A.project.root}\``, `Layer: ${m.layer} · context: ${m.ctx}`, '',
+    'This file is flagged as a code smell by Sprawler. Make it easier to read and change **without changing behaviour**:', '', ...asks, '',
+    'Constraints: keep public names and signatures, do not add dependencies that cross the architecture rules (domain stays pure, go through ports), keep tests green and add focused tests for any extracted logic.',
+    '', 'Done when: every function is under ~60 lines and complexity ~15, the file reads top-down, and `sprawler report` no longer lists it among the smells.'].join('\n')
+}
+
 export function detailModule(A, m, nb) {
   const l = A.layers[m.layer] || {}
   const c = A.contexts.find((x) => x.key === m.ctx)
   const v = A.violations.filter((x) => x.source === m.id || x.target === m.id)
   const syms = m.sample.slice(0, 24).map(([k, n, ln]) => `<div class="sym"><i>${k === 'type' ? 'T' : k === 'method' ? 'm' : 'ƒ'}</i><span>${esc(n)}</span><em>L${ln}</em></div>`).join('')
-  return `<div class="dh"><span class="chip" style="--c:${l.color}">${esc(l.label || m.layer)}</span><span class="chip" style="--c:#8892b0">${esc(c?.label)}</span>${m.well ? '<span class="chip" style="--c:#b388ff">GRAVITY WELL</span>' : ''}<button class="x" data-close>✕</button></div>
+  const [bi, bn] = ARCH_ICON[A.wells?.includes(m.id) ? 'megatower' : ARCH[m.layer] || 'apartment'] || ['🏢', 'Building']
+  const wip = m.wip === 'new' ? `<span class="chip" style="--c:#c99a00">🏗 new · +${m.wipAdd || 0}</span>` : m.wip === 'mod' ? `<span class="chip" style="--c:#c99a00">🧰 editing · +${m.wipAdd || 0} −${m.wipDel || 0}</span>` : ''
+  return `<div class="dh"><span class="chip" style="--c:#5d6874">${bi} ${esc(bn)}</span><span class="chip" style="--c:${l.color}">${esc(l.label || m.layer)}</span><span class="chip" style="--c:#8892b0">${esc(c?.label)}</span>${wip}${m.well ? '<span class="chip" style="--c:#8b62c9">🗼 MEGA-TOWER</span>' : ''}<button class="x" data-close>✕</button></div>
     <h2>${esc(m.name)}</h2><div class="path">${esc(m.path || 'platform-generated handle (virtual)')}</div>
     <div class="path">classified by <b>${esc(m.rule || 'no rule — unmapped')}</b></div>
     ${m.role ? `<div class="path">role <b>${esc(m.role)}</b>${m.project ? ` · project <b>${esc(m.project)}</b>` : ''}${m.evidence?.length ? ` — because ${esc(m.evidence.join('; '))}` : ''}</div>` : ''}
     ${m.resolution && m.resolution[1] ? `<div class="path">${m.resolution[1]} name(s) in this file could not be resolved — some dependencies may be missing</div>` : ''}
     <div class="stats s4"><div><b>${m.loc}</b><span>lines</span></div><div><b>${m.symbols.types}</b><span>types</span></div>
     <div><b>${m.fanIn}</b><span>fan-in</span></div><div><b>${m.fanOut}</b><span>fan-out</span></div></div>
+    ${health(A, m)}
+    <button class="bigcp ghost" data-impact="${esc(m.id)}">💥 What breaks if this changes? <kbd>D</kbd></button>
     ${v.length ? breaks(A, v, 8) : '<div class="okline">◈ this module keeps every rule</div>'}
     <div class="sec">DEPENDS ON · ${nb.out.length}</div><div class="deps">${nb.out.slice(0, 30).map((d) => depRow(d, '→')).join('') || '<small class="dim">nothing — a leaf</small>'}</div>
     <div class="sec">USED BY · ${nb.in.length}</div><div class="deps">${nb.in.slice(0, 30).map((d) => depRow(d, '←')).join('') || '<small class="dim">nobody</small>'}</div>
@@ -335,6 +419,20 @@ export function seamReport(A, s) {
   return out.join('\n')
 }
 
+// one plain-English sentence: what is going on in this district and what to do first
+function verdict(A, c, v) {
+  const wip = A.modules.filter((m) => m.ctx === c.key && m.wip).length
+  const w = wip ? ` <b>${wip}</b> building${wip > 1 ? 's are' : ' is'} under construction.` : ''
+  if (!v.length) return `🌳 A clean district: every road out of here is paved and allowed.${w}`
+  const byRule = new Map()
+  for (const x of v) byRule.set(x.rule, (byRule.get(x.rule) || 0) + 1)
+  const [rule, n] = [...byRule.entries()].sort((a, b) => b[1] - a[1])[0]
+  const msg = v.find((x) => x.rule === rule)?.message || rule
+  const out = new Set(v.filter((x) => x.toCtx && x.toCtx !== c.key).map((x) => x.toCtx)).size
+  const where = out ? `${v.length} dirt road${v.length > 1 ? 's' : ''} lead out of here to ${out} other district${out > 1 ? 's' : ''}` : `${v.length} shortcut${v.length > 1 ? 's' : ''} cut across the lawns inside the district`
+  return `${c.crit + c.major ? '🚧' : '🟫'} ${where}. Most are <b>${esc(rule)}</b> (${n}): ${esc(msg.charAt(0).toLowerCase() + msg.slice(1))}.${w}`
+}
+
 export function detailCtx(A, c, solo = new Set()) {
   const tier = A.tiers.find((t) => t.id === c.tier) || {}
   const total = Object.values(c.layers).reduce((a, b) => a + b, 0) || 1
@@ -345,8 +443,9 @@ export function detailCtx(A, c, solo = new Set()) {
   const v = A.violations.filter((x) => x.fromCtx === c.key)
   const mods = A.modules.filter((m) => m.ctx === c.key && !m.generated).sort((a, b) => b.loc - a.loc)
   return `<div class="dh"><span class="chip" style="--c:${tier.color}">${esc(tier.label)}</span>${c.nest ? '<span class="chip" style="--c:#ff2e4d">RAT\'S NEST</span>' : ''}<button class="x" data-close>✕</button></div>
-    <div class="ctxhead"><div class="grade sm" style="color:${GRADE[c.grade]};text-shadow:0 0 18px ${GRADE[c.grade]}">${c.grade}</div>
+    <div class="ctxhead"><div class="gbadge" style="--g:${GRADE[c.grade] || GRADE['?']}">${c.grade}</div>
     <div><h2>${esc(c.label)}</h2><div class="path">${esc(c.key)} · ${c.loc} lines</div></div></div>
+    <p class="verdict">${verdict(A, c, v)}</p>
     <div class="stats s4"><div><b>${c.score}</b><span>score</span></div><div><b>${pct(c.purity)}</b><span>purity</span></div>
     <div><b class="${c.tangle > 0.4 ? 'c-bad' : ''}">${pct(c.tangle)}</b><span>tangle</span></div><div><b>${c.outbound}</b><span>out-links</span></div></div>
     <div class="sec">LAYERS <small>${solo.size ? 'click a layer to add / remove it · 0 resets' : 'click one to show only it'}</small></div>${bars}
@@ -375,7 +474,10 @@ export function toast(html, kind = '') {
   const t = document.createElement('div')
   t.className = 'toast ' + kind
   t.innerHTML = html
-  $('toasts').appendChild(t)
+  const box = $('toasts')
+  box.appendChild(t)
+  // never more than four at once: the oldest makes room
+  while (box.children.length > 4) box.firstElementChild.remove()
   setTimeout(() => t.classList.add('out'), 3200)
   setTimeout(() => t.remove(), 3800)
 }
@@ -401,4 +503,39 @@ export function countUp(el, to, dur = 1600, onTick) {
     if (k < 1) requestAnimationFrame(step)
   }
   step()
+}
+
+// a traffic citation for one rule break
+const FINES = { critical: 500, major: 250, minor: 50 }
+export function detailTicket(A, v, i) {
+  const no = String(1000 + i).padStart(6, '0')
+  const where = v.line ? `${v.source}:${v.line}` : v.source
+  const loc = A.contexts.find((c) => c.key === v.fromCtx)?.label || v.fromCtx || ''
+  const dest = A.contexts.find((c) => c.key === v.toCtx)?.label || v.toCtx || ''
+  return `<div class="ticket">
+    <div class="th2"><span>🚓 CITY OF ${esc((A.project.title || A.project.name).split('·')[0].trim().toUpperCase())}</span><b>CITATION № ${no}</b><button class="x" data-close>✕</button></div>
+    <div class="tv"><div><small>VIOLATION</small><b>${esc(v.rule)}</b></div><div><small>SEVERITY</small><b class="sev-${esc(v.severity)}">${esc(v.severity.toUpperCase())}</b></div><div><small>FINE</small><b>${FINES[v.severity] || 50} XP</b></div></div>
+    <p class="tm">${esc(v.message)}</p>
+    <div class="tr"><small>STOPPED AT</small><code>${esc(where)}</code></div>
+    <div class="tr"><small>HEADING FOR</small><code>${esc(v.target)}</code></div>
+    ${loc && dest && loc !== dest ? `<div class="tr"><small>ROUTE</small><span>${esc(loc)} → ${esc(dest)} · no road exists here</span></div>` : ''}
+    ${v.snippet ? `<pre class="snip">${esc(v.snippet)}</pre>` : ''}
+    <button class="bigcp" data-copy="${i}">⧉ Pay the fine — copy the agent fix prompt</button>
+    <div class="deps"><div class="dep bad" data-mod="${esc(v.source)}"><i>●</i><span>${esc(short(v.source))}</span><em>driver</em></div><div class="dep" data-mod="${esc(v.target)}"><i>●</i><span>${esc(short(v.target))}</span><em>destination</em></div></div>
+    <div class="tf">Officer's note: ${esc(v.why || 'Go through a public port instead of cutting through the woods.')}</div>
+  </div>`
+}
+
+export function detailImpact(A, m, ring) {
+  const by = [1, 2, 3].map((d) => [...ring].filter(([, x]) => x === d).map(([id]) => id))
+  const ctxs = new Set([...ring.keys()].map((id) => A.modules.find((x) => x.id === id)?.ctx))
+  const list = (ids) => ids.slice(0, 40).map((id) => `<div class="dep" data-mod="${esc(id)}"><i>›</i><span>${esc(short(id))}</span></div>`).join('') || '<small class="dim">nobody</small>'
+  return `<div class="dh"><span class="chip" style="--c:#e0483b">💥 DEMOLITION PREVIEW</span><button class="x" data-close>✕</button></div>
+    <h2>If ${esc(m.name)} changes…</h2>
+    <p class="verdict">${ring.size ? `<b>${ring.size}</b> building${ring.size > 1 ? 's' : ''} in <b>${ctxs.size}</b> district${ctxs.size > 1 ? 's' : ''} depend on it, directly or within three hops. <b>${by[0].length}</b> would feel it immediately.` : '🌳 Nothing depends on this building — safe to change or demolish.'}</p>
+    <div class="stats s4"><div><b class="c-bad">${by[0].length}</b><span>direct</span></div><div><b style="color:#d9771c">${by[1].length}</b><span>2nd ring</span></div><div><b style="color:#b8920e">${by[2].length}</b><span>3rd ring</span></div><div><b>${ctxs.size}</b><span>districts</span></div></div>
+    <div class="sec">DIRECT DEPENDENTS · ${by[0].length}</div><div class="deps">${list(by[0])}</div>
+    ${by[1].length ? `<div class="sec">SECOND RING · ${by[1].length}</div><div class="deps">${list(by[1])}</div>` : ''}
+    ${by[2].length ? `<div class="sec">THIRD RING · ${by[2].length}</div><div class="deps">${list(by[2])}</div>` : ''}
+    <div class="note">Press <b>D</b> again or <b>Esc</b> to clear.</div>`
 }

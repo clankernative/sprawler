@@ -9,3 +9,7 @@ atlas.json
 .venv/
 /target/
 .DS_Store
+
+# Blender autosaves and preview scratch
+art/*.blend1
+art/previews/_tiles/

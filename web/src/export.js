@@ -1,30 +1,30 @@
 // Export the current view as a presentation PNG or PDF (optionally plain background, info header, summary pages).
 import { jsPDF } from 'jspdf'
-import { GRADE } from './atlas.js'
+import * as THREE from 'three'
+import { GRADE } from './city/CityView.js'
 
-const NIGHT = '#02050a'
 
-// CSS2D labels are DOM, not canvas — redraw every visible text run onto the export canvas
+// CSS2D labels are DOM, not canvas — repaint each visible label onto the export canvas: every nested
+// background (signs, grade badges, pills) as a rounded box, then every text run on top
 function drawLabels(ctx, s) {
   const layer = document.querySelector('.labels')
   if (!layer) return
+  const clear = (c) => !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)'
   for (const el of layer.children) {
     if (el.style.display === 'none') continue
-    const cs = getComputedStyle(el)
-    const op = Math.min(1, parseFloat(el.style.opacity || cs.opacity || '1'))
+    const op = Math.min(1, parseFloat(el.style.opacity || getComputedStyle(el).opacity || '1'))
     if (op < 0.05) continue
-    const r = el.getBoundingClientRect()
-    if (r.width < 1 || r.right < 0 || r.bottom < 0 || r.left > innerWidth || r.top > innerHeight) continue
-    ctx.globalAlpha = op
-    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+    const r0 = el.getBoundingClientRect()
+    if (r0.width < 1 || r0.right < 0 || r0.bottom < 0 || r0.left > innerWidth || r0.top > innerHeight) continue
+    for (const node of [el, ...el.querySelectorAll('*')]) {
+      const cs = getComputedStyle(node)
+      if (cs.display === 'none' || clear(cs.backgroundColor)) continue
+      const r = node.getBoundingClientRect()
+      ctx.globalAlpha = op * parseFloat(cs.opacity || '1')
       ctx.fillStyle = cs.backgroundColor
-      ctx.fillRect(r.left * s, r.top * s, r.width * s, r.height * s)
-    }
-    const bw = parseFloat(cs.borderTopWidth) || 0
-    if (bw) {
-      ctx.strokeStyle = cs.borderTopColor
-      ctx.lineWidth = bw * s
-      ctx.strokeRect(r.left * s, r.top * s, r.width * s, r.height * s)
+      ctx.beginPath()
+      ctx.roundRect(r.left * s, r.top * s, r.width * s, r.height * s, (parseFloat(cs.borderTopLeftRadius) || 0) * s)
+      ctx.fill()
     }
     const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
@@ -35,6 +35,7 @@ function drawLabels(ctx, s) {
       const range = document.createRange()
       range.selectNodeContents(n)
       const tr = range.getBoundingClientRect()
+      ctx.globalAlpha = op
       ctx.fillStyle = ps.color
       ctx.font = `${ps.fontWeight} ${parseFloat(ps.fontSize) * s}px ${ps.fontFamily}`
       ctx.textBaseline = 'middle'
@@ -51,42 +52,50 @@ function seamLine(A) {
   return ` · seams ${S.length}${bad ? ` ✕${bad}` : ''}${dead ? ` ◌${dead}` : ''}`
 }
 
-function drawHeader(ctx, W, H, s, A, doc) {
+// a clean title strip + legend in the city HUD's style
+function drawHeader(ctx, W, H, s, A) {
   const sc = A.score
-  const ink = doc ? '#1f2630' : '#cfe8ff', dim = doc ? '#6b6558' : '#6f89a6'
-  const f = (sz, w = 400) => `${w} ${sz * s}px ui-monospace, 'SF Mono', Menlo, monospace`
-  const h = 66 * s
-  ctx.fillStyle = doc ? 'rgba(250,247,240,0.95)' : 'rgba(4,10,18,0.9)'
-  ctx.fillRect(0, 0, W, h)
-  ctx.fillStyle = doc ? 'rgba(31,38,48,.35)' : 'rgba(76,201,255,.45)'
-  ctx.fillRect(0, h - s, W, s)
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillStyle = GRADE[sc.grade] || ink
-  ctx.font = f(42, 900)
-  ctx.fillText(sc.grade, 18 * s, 50 * s)
-  ctx.fillStyle = ink
-  ctx.font = f(16, 800)
-  ctx.fillText(`SPRAWLER · ${A.project.title}`, 70 * s, 28 * s)
-  ctx.fillStyle = dim
-  ctx.font = f(11)
-  const worst = sc.worst ? ` · worst ${sc.worst.label} ${sc.worst.score} [${sc.worst.grade}]` : ''
-  ctx.fillText(`score ${sc.total}/100${worst} · confidence ${Math.round((sc.confidence ?? 1) * 100)}% · ${A.modules.length} modules · ${sc.edges} deps · ${A.violations.length} findings${seamLine(A)}`, 70 * s, 48 * s)
-  ctx.textAlign = 'right'
-  ctx.fillText(`${A.project.sha || ''}  ${new Date().toISOString().slice(0, 10)}`, W - 18 * s, 28 * s)
-  ctx.textAlign = 'left'
-  // tier legend along the bottom
-  let x = 18 * s
-  const y = H - 16 * s
-  ctx.fillStyle = doc ? 'rgba(250,247,240,0.85)' : 'rgba(4,10,18,0.75)'
-  ctx.fillRect(0, H - 30 * s, W, 30 * s)
-  ctx.font = f(10.5, 600)
+  const ink = '#1d2731', dim = '#6d7883'
+  const f = (sz, w = 500) => `${w} ${sz * s}px -apple-system, 'SF Pro Text', Inter, system-ui, sans-serif`
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill() }
+  const h = 64 * s
+  ctx.fillStyle = 'rgba(252,250,246,0.95)'
+  rr(14 * s, 14 * s, W - 28 * s, h, 14 * s)
   ctx.textBaseline = 'middle'
-  for (const t of A.tiers) {
-    ctx.fillStyle = t.color
-    ctx.fillRect(x, y - 5 * s, 10 * s, 10 * s)
+  const g = sc.withheld ? '?' : sc.grade
+  ctx.fillStyle = GRADE[g] || dim
+  rr(26 * s, 22 * s, 48 * s, 48 * s, 12 * s)
+  ctx.fillStyle = '#fff'
+  ctx.font = f(26, 800)
+  ctx.textAlign = 'center'
+  ctx.fillText(g, 50 * s, 47 * s)
+  ctx.textAlign = 'left'
+  ctx.fillStyle = ink
+  ctx.font = f(17, 750)
+  ctx.fillText(A.project.title, 88 * s, 37 * s)
+  ctx.fillStyle = dim
+  ctx.font = f(12)
+  const worst = sc.worst ? ` · worst district ${sc.worst.label} ${sc.worst.grade}` : ''
+  const tracks = A.violations.length
+  ctx.fillText(`city rating ${sc.total}/100${worst} · ${A.modules.length} buildings · ${A.edges.length.toLocaleString()} cars · ${tracks} dirt roads${seamLine(A)}`, 88 * s, 57 * s)
+  ctx.textAlign = 'right'
+  ctx.fillText(`${A.project.branch || ''} ${A.project.sha || ''} · ${new Date().toISOString().slice(0, 10)}`, W - 30 * s, 37 * s)
+  ctx.textAlign = 'left'
+  // legend: zoning by tier + what the marks mean
+  const items = [...A.tiers.map((t) => [t.color, t.label]), ['#b48a5e', 'dirt road = rule break'], ['#d65a4a', 'red roof = breaks a rule'], ['#f2c230', 'crane = uncommitted']]
+  ctx.font = f(11.5, 600)
+  let w = 24 * s
+  for (const [, l] of items) w += ctx.measureText(l).width + 40 * s
+  ctx.fillStyle = 'rgba(252,250,246,0.92)'
+  rr(14 * s, H - 46 * s, Math.min(W - 28 * s, w), 32 * s, 10 * s)
+  let x = 28 * s
+  const y = H - 30 * s
+  for (const [c, l] of items) {
+    ctx.fillStyle = c
+    rr(x, y - 6 * s, 12 * s, 12 * s, 3 * s)
     ctx.fillStyle = ink
-    ctx.fillText(t.label, x + 15 * s, y)
-    x += (ctx.measureText(t.label).width + 38 * s)
+    ctx.fillText(l, x + 18 * s, y)
+    x += ctx.measureText(l).width + 40 * s
   }
 }
 
@@ -140,16 +149,16 @@ function download(href, name) {
 }
 
 export async function exportView(o, { world, A }) {
-  const { renderer, composer, scene, floor, stars } = world
+  const { renderer, composer, scene, sky } = world
   const doc = document.body.classList.contains('doc')
   const pr = renderer.getPixelRatio()
   const s = o.scale || 2
-  const saved = { floor: floor.visible, stars: stars.visible, bg: scene.background.clone(), fog: scene.fog.color.clone() }
+  const saved = { sky: sky.visible, bg: scene.background, fogNear: scene.fog.near, fogFar: scene.fog.far }
   if (o.bg === 'plain') {
-    floor.visible = false
-    stars.visible = false
-    scene.background.set(doc ? '#ffffff' : NIGHT)
-    scene.fog.color.copy(scene.background)
+    // no sky, no haze: the city model on a clean sheet
+    sky.visible = false
+    scene.background = new THREE.Color(doc ? '#ffffff' : '#f5f1e8')
+    scene.fog.near = 1e6; scene.fog.far = 2e6
   }
   const out = document.createElement('canvas')
   try {
@@ -162,10 +171,9 @@ export async function exportView(o, { world, A }) {
     out.height = renderer.domElement.height
     out.getContext('2d').drawImage(renderer.domElement, 0, 0) // same task as render: no preserveDrawingBuffer needed
   } finally {
-    floor.visible = saved.floor
-    stars.visible = saved.stars
-    scene.background.copy(saved.bg)
-    scene.fog.color.copy(saved.fog)
+    sky.visible = saved.sky
+    scene.background = saved.bg
+    scene.fog.near = saved.fogNear; scene.fog.far = saved.fogFar
     renderer.setPixelRatio(pr)
     renderer.setSize(innerWidth, innerHeight)
     composer.setPixelRatio(pr)
@@ -174,7 +182,7 @@ export async function exportView(o, { world, A }) {
   const ctx = out.getContext('2d')
   const W = out.width, H = out.height
   if (o.labels !== false) drawLabels(ctx, s)
-  if (o.info) drawHeader(ctx, W, H, s, A, doc)
+  if (o.info) drawHeader(ctx, W, H, s, A)
   const name = `sprawler-${A.project.name}-${A.project.sha || 'wip'}-${new Date().toISOString().slice(0, 10)}`
   if (o.format === 'pdf') {
     const pw = 1200, ph = Math.round((1200 * H) / W)
