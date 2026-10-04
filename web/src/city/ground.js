@@ -50,6 +50,9 @@ export function paintLanduse(plan) {
   }
   const data = g.getImageData(0, 0, RES, RES).data
   const tex = new THREE.CanvasTexture(cv)
+  // the canvas is painted with row 0 = world -z, which is exactly how the shader reads it; WebGL's
+  // default upload flip would mirror every clearing, verge and dirt scar to the other side of the map
+  tex.flipY = false
   tex.colorSpace = THREE.NoColorSpace
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.anisotropy = 8
