@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Uncommitted work:** modules, edges and findings carry `wip` (working tree vs HEAD, per repo), and
+  the atlas a `wip` summary with deleted-but-uncommitted files.
+- **Code health:** analyzers report optional `modules[].metrics` (function length and complexity,
+  nesting, TODOs); the core adds git churn, authors and age, and flags smells against `[smells]`
+  limits. Informational only: the score is unchanged.
+- **Server events:** `sprawler serve` logs what changed between scans (`GET /api/events`), and also
+  rescans on commits, staging and checkouts. Its own git calls no longer touch the index.
+- **`sprawler demo`:** a self-running demo on a sandbox copy of the committed files.
+
 ## 0.3.2
 
 - **Rust analyzer:** a Graphify link into another crate is kept only when the file's own imports or

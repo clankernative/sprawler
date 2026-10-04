@@ -160,6 +160,22 @@ decoded by a Rust `match`). Mismatches become findings; seams never change the s
 | `min_confidence` | `0.6` | Below this confidence the grade is withheld (`?`) |
 | `boundary` | `false` | Also score each context→context pair once by its worst finding, so thousands of clean in-context links cannot hide coupling across many boundaries |
 
+### `[smells]` — code-health limits
+
+Analyzers report per-file facts (`modules[].metrics`: function length and complexity, nesting, TODOs;
+see PROTOCOL.md); the core adds git churn, authors and age, and flags a file when it reaches a limit.
+Smells are informational: they never change the score.
+
+| Key | Default | Smell |
+|---|---|---|
+| `long_file` | `500` | `longFile`: lines of code in the file |
+| `long_fn` | `60` | `longFn`: lines in the longest function |
+| `complex_fn` | `15` | `complexFn`: cyclomatic complexity of the worst function |
+| `deep_nest` | `6` | `deepNest`: indentation depth |
+| `deep_nest_by_lang` | `{ roc = 10, rs = 9 }` | `deep_nest` per module `lang` (continuation-passing Roc and impl → fn → match Rust nest by design) |
+| `todos` | `5` | `todos`: TODO / FIXME / HACK / XXX markers |
+| — | — | `busFactor`: one author, at least 8 commits in the last 600 |
+
 ## Merging (`extends`)
 
 When a profile extends a base:
@@ -186,3 +202,37 @@ The atlas JSON (`sprawler scan`, schema `sprawler.atlas/1`) carries, under `scor
 
 A high score with low coverage or low confidence is not a clean bill of health; the UI and
 `sprawler check` show both.
+
+## Uncommitted work and code health
+
+The atlas also describes the working tree against HEAD (per repo, multi-repo profiles included) and
+each file's health. None of it changes the score.
+
+- `modules[].wip`: `null`, `"new"` (untracked or added) or `"mod"` (modified or renamed), with
+  `wipAdd` / `wipDel` lines. `edges[].wip` and `violations[].wip`: the dependency does not exist at
+  HEAD (it touches a new file, or a modified file now names the target and its HEAD version did not;
+  in `serve`, also edges that appeared during the session).
+- `wip`: totals (`files`, `new`, `mod`, `added`, `deleted`, `edges`, `violations`, `other`), the
+  touched `contexts`, `demolished` files (deleted, not yet committed: `{path, ctx, tier, del, renamed?}`),
+  `edgeBasis` (how edge `wip` was decided) and `git` (whether any repo is a git repository).
+- `modules[].metrics`: the analyzer's measurements plus `churn`, `authors`, `age` (days since the last
+  change), `smells` and `smell` (0..1, how far past the size, function-length, complexity and nesting
+  limits). `smells`: the limits, the count of files per smell, and how many files smell at all.
+
+## Server events
+
+`sprawler serve` compares every scan with the previous one and logs what changed as events (kept in
+`~/.cache/sprawler/<workspace>/events.jsonl`, the newest 1000). `GET /api/events?since=<id>&limit=<n>`
+returns `{"events": [...], "last": <id>}`; `GET /api/version` includes `"events": <last id>`.
+
+Each event has `id`, `t` (unix seconds), `kind`, `sev` (`info`, `good`, `warn`, `bad`) and, depending on
+the kind, `ctx`, `ctxs`, `module`, `modules`, `source`, `target`, `rule`, `severity`, `count`, `from`,
+`to`, `sha`, `subject`, `author`, `branch`, `seam`, `kinds`, `wip` or `summary`. Kinds: `boot` (the first
+scan of a session, after any commits made while the server was down), `build.start` / `build.renovate`
+/ `build.open` / `build.demolish` / `build.cleared` (uncommitted files appear, change, get committed,
+deleted, restored), `module.added` / `module.removed`, `road.paving` / `road.open` (new dependencies,
+uncommitted or committed), `track.cut` / `track.closed` (findings), `bridge.broken` / `bridge.fixed` /
+`bridge.dead` (contract seams), `grade.up` / `grade.down`, `score`, `trophy.won` / `trophy.lost`,
+`cycle.new` / `cycle.gone`, `well.new` / `well.gone`, `nest.new` / `nest.gone`, `commit` and `branch`.
+More than 40 events of one kind in one scan arrive as one event with `aggregated: true`, a `count`
+and a `sample`.

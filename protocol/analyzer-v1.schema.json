@@ -79,8 +79,27 @@
         "facts": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
         "evidence": { "type": "array", "items": { "type": "string" } },
         "generated": { "type": "boolean" },
-        "resolution": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 }
+        "resolution": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "metrics": { "$ref": "#/$defs/metrics" }
       }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Optional per-file code-health facts. Informational: never part of the score",
+      "properties": {
+        "cc": { "type": "integer", "minimum": 1, "description": "approximate cyclomatic complexity of the whole file" },
+        "ccMax": { "type": "integer", "minimum": 1, "description": "complexity of the most complex function" },
+        "ccFn": { "type": ["string", "null"] },
+        "ccLine": { "type": ["integer", "null"], "minimum": 1 },
+        "fnMax": { "type": "integer", "minimum": 0, "description": "lines of the longest function" },
+        "fnName": { "type": ["string", "null"] },
+        "fnLine": { "type": ["integer", "null"], "minimum": 1 },
+        "fns": { "type": "integer", "minimum": 0 },
+        "nest": { "type": "integer", "minimum": 0, "description": "deepest indentation, in indent units" },
+        "todo": { "type": "integer", "minimum": 0, "description": "TODO / FIXME / HACK / XXX markers" },
+        "comments": { "type": "number", "minimum": 0, "maximum": 1, "description": "share of lines that are comments" }
+      },
+      "additionalProperties": false
     },
     "edge": {
       "type": "object",

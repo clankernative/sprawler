@@ -3,59 +3,90 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SPRAWLER</title>
+  <title>Sprawler</title>
+  <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 </head>
 <body>
   <div id="stage"></div>
+  <div id="markers"></div>
 
-  <header id="top" class="hud">
-    <div class="logo"><span class="hexmark">⬡</span> SPRAWLER <em id="proj">…</em></div>
+  <header id="top" class="hud card">
+    <div class="brand"><img class="mark" src="./logo.svg" alt="" /><div><b>SPRAWLER</b><em id="proj">…</em></div></div>
     <div id="head" class="head"></div>
     <div id="live" class="live"><i></i>CONNECTING</div>
     <div class="spacer"></div>
     <div class="searchwrap">
-      <input id="search" placeholder="search contexts, modules  ( / )" autocomplete="off" spellcheck="false" />
+      <input id="search" placeholder="Search or jump to…" autocomplete="off" spellcheck="false" readonly /><kbd class="kbd">⌘K</kbd>
       <div id="results"></div>
     </div>
     <div class="modes">
-      <div class="viewswrap"><button id="viewsBtn" title="preset views (1–9)">▦ VIEWS ▾</button><div id="viewsMenu"></div></div>
-      <button id="tangleBtn" class="tangle" title="T">TANGLE</button>
-      <button id="topBtn" title="V">⬡ TOP</button>
-      <button id="docBtn" title="B — paper diagram mode">✎ DOC</button>
-      <button id="exportBtn" title="X — export PNG / PDF">⤓ EXPORT</button>
-      <button id="adminBtn" title="G — tables view">▤ TABLES</button>
-      <button id="muteBtn" title="M">♪</button>
-      <button id="resetBtn" title="0 — select nothing, show everything">⌂ RESET</button>
+      <div class="viewswrap"><button id="viewsBtn" title="preset views (1–9)">Views ▾</button><div id="viewsMenu"></div></div>
+      <button id="nightBtn" title="N — day / night">☾</button>
+      <button id="topBtn" title="V — bird's-eye view">⬡ Top</button>
+      <button id="docBtn" title="B — city plan: white clay model for diagrams">Plan</button>
+      <button id="exportBtn" title="X — export PNG / PDF">Export</button>
+      <button id="adminBtn" title="G — tables view">Tables</button>
+      <button id="muteBtn" title="M — sound">♪</button>
+      <button id="resetBtn" title="0 — select nothing, show everything">⌂</button>
       <button id="settingsBtn" title="workspace settings">⚙</button>
-      <button id="helpBtn" title="? — every shortcut">?</button>
+      <button id="helpBtn" title="? — how to read the city">?</button>
+      <button id="tangleBtn" hidden></button>
     </div>
   </header>
 
-  <aside id="left" class="hud panel"></aside>
+  <section id="kpi" class="hud"></section>
 
-  <aside id="right" class="hud panel">
+  <aside id="left" class="hud card">
+    <button class="qh" id="questHead" title="collapse / expand"><b>Quests</b><span id="questCount" class="cnt"></span><i class="chev">▾</i></button>
+    <div id="quests"></div>
+  </aside>
+
+  <aside id="right" class="hud card">
     <div class="tabs">
-      <button data-tab="inbox" id="tabInbox" class="on">INBOX</button>
-      <button data-tab="explore" id="tabExplore">EXPLORE</button>
-      <button data-tab="history" id="tabHistory">GIT</button>
+      <button data-tab="explore" id="tabExplore" class="on">Explore</button>
+      <button data-tab="history" id="tabHistory">History</button>
+      <button data-tab="map" id="tabMap">Map</button>
     </div>
     <div id="rightBody"></div>
   </aside>
+  <nav id="dock" class="hud card">
+    <button data-dock="flows" title="Explore — use cases, ports, traces, trophies"><i>🧭</i><span>Explore</span></button>
+    <button data-dock="history" title="History — commits and their blast radius"><i>🕘</i><span>History</span></button>
+    <button data-dock="map" title="Map — legend, filters, districts"><i>🗺</i><span>Map</span></button>
+    <button data-dock="lens" title="Lenses — colour the city by size, complexity, churn… (Y)"><i>🌡</i><span>Lenses</span></button>
+    <button data-dock="chopper" title="U — ride along with the news chopper"><i>🚁</i><span>Chopper</span></button>
+    <hr>
+    <button data-dock="hud" title="H — hide the interface (screenshots, presenting)"><i>👁</i><span>Hide UI</span></button>
+  </nav>
 
-  <button id="lDrawer" class="hud drawer l" title="hide/show left panel ( [ )">‹</button>
-  <button id="rDrawer" class="hud drawer r" title="hide/show right panel ( ] )">›</button>
-  <section id="detail" class="hud panel"></section>
+  <div id="mapbox" class="hud card"><canvas id="minimap"></canvas><span class="mt">CITY MAP</span><span class="ml"><span><i style="background:#f2c230"></i>building</span><span><i style="background:#e0483b"></i>dirt road</span><span><i style="background:#2f6bff"></i>you</span></span></div>
+  <div id="ticker" class="hud card"><div class="mast"><i></i>The Daily Commit</div><div class="lane"><div class="roll" id="tickerRoll"></div></div></div>
+  <section id="timeline" class="card"></section>
+  <section id="scrub" class="card"></section>
+  <div id="lensbar" class="card"></div>
+  <div id="lowerThird"></div>
+  <section id="advisor" class="card"></section>
+  <div id="paper"></div>
+
+  <button id="lDrawer" class="hud drawer l" title="hide/show left panels ( [ )">‹</button>
+  <button id="rDrawer" class="hud drawer r" title="hide/show right panel ( ] )" hidden>›</button>
+  <div id="palette"></div>
+  <div id="coach"></div>
+  <div id="hudHint">Interface hidden — press <b>H</b> to bring it back</div>
+  <section id="detail" class="hud card"></section>
+
   <div id="exportModal">
-    <div class="panel mbox">
-      <h3>⤓ EXPORT VIEW</h3>
-      <p class="explain">Exports exactly what the camera sees now. Tip: press <b>B</b> for document mode and <b>V</b> for top-down first, and use ONLY / +NEIGHBOURS to export one slice of the system.</p>
+    <div class="mbox">
+      <h3>Export this view</h3>
+      <p class="explain">Exports exactly what the camera sees. Tip: press <b>B</b> for the white city-plan model and <b>V</b> for the bird's-eye view first, and use ONLY / +NEIGHBOURS on the Map tab to export one part of the city.</p>
       <div class="opt"><span>Format</span><div class="pickbar"><button data-ex-format="png" class="on">PNG</button><button data-ex-format="pdf">PDF</button></div></div>
       <div class="opt"><span>Background</span><div class="pickbar"><button data-ex-bg="scene" class="on">SCENE</button><button data-ex-bg="plain">PLAIN</button></div></div>
       <div class="opt"><span>Info</span><div class="pickbar"><button data-ex-info="1" class="on">HEADER + LEGEND</button><button data-ex-info="0">NONE</button></div></div>
       <div class="opt"><span>Labels</span><div class="pickbar"><button data-ex-labels="1" class="on">AS SHOWN</button><button data-ex-labels="0">NONE</button></div></div>
       <div class="opt"><span>Resolution</span><div class="pickbar"><button data-ex-scale="1">1×</button><button data-ex-scale="2" class="on">2×</button><button data-ex-scale="3">3×</button></div></div>
-      <p class="explain">PDF + info adds summary pages: every context (worst first), every threat with file:line, and the contract seams.</p>
-      <div class="mact"><button id="exGo" class="bigcp">⤓ EXPORT</button><button id="exCancel">CANCEL</button></div>
+      <p class="explain">PDF + info adds summary pages: every district (worst first), every rule break with file:line, and the contract seams.</p>
+      <div class="mact"><button id="exGo" class="bigcp">⤓ Export</button><button id="exCancel">Cancel</button></div>
     </div>
   </div>
   <div id="scopeBar" class="hud"></div>
@@ -63,39 +94,55 @@
   <div id="admin"></div>
   <div id="toasts"></div>
   <div id="tip"></div>
-  <footer class="hud keys"><span><b>1–9</b> views</span><span><b>WASD</b> move</span><span><b>G</b> tables</span><span><b>ESC</b> back</span><span><b>0</b> reset</span><span><b>?</b> all shortcuts</span></footer>
 
   <div id="helpModal">
-    <div class="panel mbox help">
-      <h3>? HOW TO USE SPRAWLER</h3>
-      <p class="explain">Start with the <b>INBOX</b> on the right: work top to bottom, press <b>▶ SHOW</b> to load the right view, <b>⧉ AGENT FIX</b> to hand an agent a fix prompt. Mark items <b>✓ DONE</b> or <b>⏾ 7d</b>; review them under DONE &amp; SNOOZED.</p>
-      <div class="hcols">
-        <div><div class="sub">MOUSE</div><div><b>left-drag</b> orbit</div><div><b>middle / right-drag</b> pan</div><div><b>wheel</b> zoom</div><div><b>click</b> select</div><div><b>⇧ click</b> pick a context</div></div>
-        <div><div class="sub">MOVE</div><div><b>W A S D</b> move (⇧ fast)</div><div><b>Q E</b> orbit</div><div><b>V</b> top-down</div><div><b>O</b> overview</div><div><b>F</b> fit picks</div></div>
-        <div><div class="sub">VIEWS</div><div><b>1–9</b> presets</div><div><b>0</b> reset: show everything</div><div><b>B</b> document mode</div><div><b>T</b> hairball</div><div><b>I</b> isolate picks</div><div><b>L</b> label level</div></div>
-        <div><div class="sub">FIND &amp; FIX</div><div><b>/</b> search</div><div><b>N</b> next finding</div><div><b>C</b> copy fix prompt</div><div><b>P</b> replay git</div><div><b>R</b> rescan</div></div>
-        <div><div class="sub">OTHER</div><div><b>[ ]</b> hide panels</div><div><b>G</b> tables view</div><div><b>X</b> export</div><div><b>M</b> mute</div><div><b>ESC</b> back / close</div></div>
+    <div class="mbox help">
+      <h3>How to read the city</h3>
+      <p class="explain">Your codebase is a metropolis. <b>Districts</b> are bounded contexts, <b>buildings</b> are modules (taller = more code), and every <b>car</b> is one dependency driving to the module it uses. Roads exist only where your architecture rules allow a dependency — anything else has to bulldoze a <b>dirt road through the woods</b>. Cranes and scaffolding are <b>uncommitted work</b>; a commit is the grand opening.</p>
+      <div class="legend">
+        <div><i>🏙</i>Downtown = your core tier; ring roads = the boundaries between tiers</div>
+        <div><i>🛣</i>Highways = allowed dependencies between districts</div>
+        <div><i>🟫</i>Dirt road through the forest = a rule break between districts</div>
+        <div><i>🥾</i>Trampled path across a lawn = a rule break inside a district</div>
+        <div><i>🟥</i>Red roof / red car = a module or dependency that breaks a rule</div>
+        <div><i>🏗</i>Crane = new file · scaffolding = edited file · rubble = deleted file</div>
+        <div><i>🚧</i>Bulldozer + inspector = an uncommitted rule break (fix it before you commit)</div>
+        <div><i>🏭</i>Smokestacks = a run-down district (grade C or worse)</div>
+        <div><i>🦨</i>Stained walls + green stink lines = a smelly file (very long, long or complex functions, deep nesting)</div>
+        <div><i>🌡</i>Lenses recolour every building by size, complexity, function length, churn, freshness, load or bus factor</div>
+        <div><i>🚁</i>The news chopper flies to whatever is happening — press <b>U</b> to ride along</div>
+        <div><i>🚓</i>Police pulling a red car over = a rule break — click the cruiser for the ticket</div>
+        <div><i>🌧</i>Weather follows health: the sky tracks the city rating, rain clouds park over grade D districts, storms over F</div>
+        <div><i>🧭</i>Selected lanes: <b style="color:#2f6bff">blue</b> = it depends on, <b style="color:#10a596">teal</b> = depends on it, <b style="color:#e0483b">red</b> = breaks a rule</div>
       </div>
-      <div class="mact"><button data-closehelp class="bigcp">GOT IT</button></div>
+      <div class="hcols">
+        <div><div class="sub">MOUSE</div><div><b>drag</b> pan</div><div><b>right-drag</b> orbit</div><div><b>wheel</b> zoom</div><div><b>click</b> inspect</div><div><b>⇧ click</b> pick a district</div></div>
+        <div><div class="sub">MOVE</div><div><b>W A S D</b> pan (⇧ fast)</div><div><b>Q E</b> orbit</div><div><b>V</b> bird's-eye</div><div><b>O</b> overview</div><div><b>F</b> fit picks</div></div>
+        <div><div class="sub">VIEWS</div><div><b>1–9</b> presets</div><div><b>0</b> show everything</div><div><b>N</b> day / night</div><div><b>Y</b> lens on / off</div><div><b>U</b> chopper cam</div><div><b>B</b> city plan</div><div><b>I</b> isolate picks</div></div>
+        <div><div class="sub">FIND &amp; FIX</div><div><b>⌘K</b> jump anywhere</div><div><b>J</b> next happening</div><div><b>K</b> next rule break</div><div><b>D</b> what breaks if it changes</div><div><b>P</b> time-lapse</div></div>
+        <div><div class="sub">OTHER</div><div><b>H</b> hide the interface</div><div><b>[ ]</b> hide panels</div><div><b>G</b> tables view</div><div><b>X</b> export</div><div><b>M</b> sound</div><div><b>R</b> rescan</div></div>
+      </div>
+      <div class="mact"><button data-closehelp class="bigcp">Got it</button></div>
     </div>
   </div>
 
   <div id="boot">
     <div class="bars top"></div><div class="bars bot"></div>
     <div class="card">
-      <div class="mark"><span>⬡</span> SPRAWLER</div>
+      <img class="bootlogo" src="./logo.svg" alt="" />
+      <div class="mark">SPRAWLER</div>
       <h1 id="bootTitle">&nbsp;</h1>
-      <div class="bsub" id="bootSub">hexagonal architecture observatory</div>
+      <div class="bsub" id="bootSub">your codebase, as a city</div>
       <div class="bstats">
-        <div><b id="bsMods">0</b><span>modules</span></div>
-        <div><b id="bsDeps">0</b><span>dependencies</span></div>
-        <div><b id="bsCtx">0</b><span>contexts</span></div>
-        <div><b id="bsFix">0</b><span>to look at</span></div>
+        <div><b id="bsMods">0</b><span>buildings</span></div>
+        <div><b id="bsDeps">0</b><span>cars on the road</span></div>
+        <div><b id="bsCtx">0</b><span>districts</span></div>
+        <div><b id="bsFix">0</b><span>quests</span></div>
       </div>
       <div class="bprog"><s id="bootBar"></s></div>
       <div class="bstage" id="bootStage">&nbsp;</div>
       <div class="bgrade" id="bootGrade"></div>
-      <div class="benter" id="engage">click or press any key</div>
+      <div class="benter" id="engage">Enter the city</div>
     </div>
   </div>
 

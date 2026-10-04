@@ -1,239 +1,221 @@
+// The world: renderer, sky, sun + soft shadows, ambient occlusion, tilt-shift, strategy-game camera.
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 
-const FLOOR_VS = /* glsl */ `
-varying vec3 vW;
-void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`
-
-const FLOOR_FS = /* glsl */ `
-uniform float uTime; uniform float uScan; uniform float uExtent; uniform float uDoc;
-#define MAXT 8
-#define MAXG 64
-// tier zones, tier ring lines and island glows are drawn HERE, not as coplanar meshes (those z-fought the floor)
-uniform vec2 uTierR[MAXT]; uniform vec3 uTierC[MAXT]; uniform float uTierN;
-uniform vec4 uGlow[MAXG]; uniform vec3 uGlowC[MAXG]; uniform float uGlowN;
-uniform float uZoneOp; uniform float uLineOp;
-varying vec3 vW;
-float hexDist(vec2 p){ p = abs(p); return max(dot(p, normalize(vec2(1.0,1.732))), p.x); }
-vec4 hexCoords(vec2 uv){
-  vec2 r = vec2(1.0,1.732); vec2 h = r*0.5;
-  vec2 a = mod(uv, r) - h; vec2 b = mod(uv - h, r) - h;
-  vec2 gv = dot(a,a) < dot(b,b) ? a : b;
-  return vec4(gv, uv - gv);
+// day and night palettes; `t` (0 day → 1 night) blends between them
+export const SKY = {
+  day: { zenith: '#7fb6e6', horizon: '#e4eef2', ground: '#c9dcc0', sun: '#fff0d8', hemiSky: '#d7ecff', hemiGround: '#7a9a5a', fog: '#dfeaee' },
+  night: { zenith: '#0a1530', horizon: '#2a3a5e', ground: '#16203a', sun: '#9fb4ff', hemiSky: '#5a6ea8', hemiGround: '#1d2636', fog: '#1a2440' },
 }
-float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+
+// depth pinned just inside the far plane: exactly 1.0 gets clipped by rounding and punches holes in the sky
+const SKY_VS = /* glsl */ `varying vec3 vDir; void main(){ vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = vec4(p.xy, p.w * 0.9999, p.w); }`
+const SKY_FS = /* glsl */ `
+uniform vec3 uZenith; uniform vec3 uHorizon; uniform vec3 uGround; uniform float uNight; uniform float uTime; varying vec3 vDir;
+float h(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 void main(){
-  vec2 uv = vW.xz / 7.0;
-  vec4 hc = hexCoords(uv);
-  float d = hexDist(hc.xy);
-  float fw = fwidth(d);
-  float far = 1.0 - smoothstep(0.03, 0.14, fw); // fade grid where cells shrink below a few pixels (kills moire)
-  float line = smoothstep(0.5 - fw * 1.8 - 0.004, 0.5, d) * far;
-  float dist = length(vW.xz);
-  float fade = 1.0 - smoothstep(uExtent*0.6, uExtent*2.2, dist);
-  float tw = step(0.985, hash(hc.zw)) * (0.5 + 0.5*sin(uTime*0.8 + hash(hc.zw)*40.0)) * far;
-  vec3 base = vec3(0.0012,0.0025,0.005);
-  vec3 col = base + vec3(0.02,0.16,0.24) * line * 0.14 * fade + vec3(0.1,0.8,1.0) * tw * 0.12 * fade;
-  // concentric pulse + scan wave
-  float pulse = smoothstep(2.0, 0.0, abs(mod(dist - uTime*6.0, 140.0) - 70.0)) * 0.05 * fade;
-  float scan = smoothstep(6.0, 0.0, abs(dist - uScan)) * step(0.0, uScan);
-  col += vec3(0.1,0.9,1.0) * (pulse + scan * (0.35 + line*0.9));
-  // document mode: warm paper with a faint dot grid at hex centres
-  vec3 paper = vec3(0.84, 0.79, 0.69);
-  float dotg = 1.0 - smoothstep(0.045, 0.075 + fw, length(hc.xy));
-  vec3 doc = paper - vec3(0.2, 0.19, 0.17) * dotg * far * 0.5 - vec3(0.06) * line * 0.6;
-  float fd = fwidth(dist);
-  for (int i = 0; i < MAXT; i++) {
-    if (float(i) >= uTierN) break;
-    vec2 r = uTierR[i];
-    float inside = step(r.x, dist) * step(dist, r.y);
-    float ln = 1.0 - smoothstep(0.0, fd * 1.5 + 0.02, abs(dist - r.y));
-    col += uTierC[i] * (inside * uZoneOp + ln * uLineOp);
-    doc = mix(doc, uTierC[i], inside * uZoneOp);
-    doc = mix(doc, vec3(0.12, 0.15, 0.19), ln * uLineOp);
-  }
-  for (int i = 0; i < MAXG; i++) {
-    if (float(i) >= uGlowN) break;
-    vec4 g = uGlow[i];
-    float gd = length(vW.xz - g.xy) / (g.z * 1.8);
-    col += uGlowC[i] * pow(max(0.0, 1.0 - gd), 2.4) * g.w * 0.4;
-  }
-  gl_FragColor = vec4(mix(col, doc, uDoc), 1.0);
+  float y = vDir.y;
+  vec3 c = y > 0.0 ? mix(uHorizon, uZenith, pow(clamp(y, 0.0, 1.0), 0.55)) : mix(uHorizon, uGround, clamp(-y * 4.0, 0.0, 1.0));
+  // stars at night
+  vec3 q = floor(vDir * 420.0);
+  float s = step(0.9975, h(q)) * smoothstep(0.05, 0.4, y) * uNight;
+  c += vec3(0.9, 0.95, 1.0) * s * (0.6 + 0.4 * sin(uTime * 2.0 + h(q) * 30.0));
+  gl_FragColor = vec4(c, 1.0);
 }`
 
-const FX = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uShake: { value: 0 }, uDoc: { value: 0 } },
-  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+// tilt-shift + gentle grade + vignette: the "miniature model" look at metro zoom
+const LOOK = {
+  uniforms: { tDiffuse: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uTilt: { value: 0 }, uFocus: { value: 0.55 }, uShake: { value: 0 }, uNight: { value: 0 }, uDoc: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: /* glsl */ `
-  uniform sampler2D tDiffuse; uniform float uTime; uniform float uShake; uniform float uDoc; varying vec2 vUv;
-  float h(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
+  uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uTilt; uniform float uFocus; uniform float uShake; uniform float uNight; uniform float uDoc; varying vec2 vUv;
   void main(){
-    vec2 c = vUv - 0.5; float d = length(c);
-    float ab = (0.0005 + d*0.0012) * (1.0 - uDoc) + uShake*0.01;
-    vec3 col;
-    col.r = texture2D(tDiffuse, vUv + c*ab).r;
-    col.g = texture2D(tDiffuse, vUv).g;
-    col.b = texture2D(tDiffuse, vUv - c*ab).b;
-    col *= 1.0 - smoothstep(0.35, 0.9, d) * 0.75 * (1.0 - uDoc * 0.85);
-
+    float band = abs(vUv.y - uFocus);
+    float blur = smoothstep(0.16, 0.55, band) * uTilt * (1.0 - uDoc);
+    vec3 col = texture2D(tDiffuse, vUv).rgb;
+    if (blur > 0.01) {
+      vec3 acc = col; float wsum = 1.0;
+      for (int i = 0; i < 12; i++) {
+        float a = float(i) * 2.39996;
+        float r = sqrt(float(i) + 0.5) / 3.5;
+        vec2 o = vec2(cos(a), sin(a)) * r * blur * 7.0 / uRes;
+        acc += texture2D(tDiffuse, vUv + o).rgb; wsum += 1.0;
+      }
+      col = acc / wsum;
+    }
+    vec2 c = vUv - 0.5;
+    col *= 1.0 - dot(c, c) * mix(0.42, 0.7, uNight) * (1.0 - uDoc);
     gl_FragColor = vec4(col, 1.0);
   }`,
 }
 
 export function createWorld(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+  const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: false })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
   renderer.setSize(innerWidth, innerHeight)
-  renderer.toneMapping = THREE.NoToneMapping
+  renderer.toneMapping = THREE.NeutralToneMapping
+  renderer.toneMappingExposure = 1.0
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
   container.appendChild(renderer.domElement)
 
   const labels = new CSS2DRenderer()
   labels.setSize(innerWidth, innerHeight)
   labels.domElement.className = 'labels'
   container.appendChild(labels.domElement)
-  // clickable labels sit above the canvas; never let them swallow zoom
-  labels.domElement.addEventListener('wheel', (e) => {
-    e.preventDefault()
-    renderer.domElement.dispatchEvent(new WheelEvent('wheel', e))
-  }, { passive: false })
+  labels.domElement.addEventListener('wheel', (e) => { e.preventDefault(); renderer.domElement.dispatchEvent(new WheelEvent('wheel', e)) }, { passive: false })
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x02050a)
-  scene.fog = new THREE.FogExp2(0x02050a, 0.0022)
+  renderer.setClearColor(SKY.day.horizon)
+  scene.fog = new THREE.Fog(new THREE.Color(SKY.day.fog), 400, 2400)
 
-  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.2, 12000)
-  camera.position.set(0, 260, 320)
+  const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.5, 9000)
+  camera.position.set(0, 420, 520)
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
-  controls.dampingFactor = 0.07
-  controls.minPolarAngle = 0 // straight down is allowed
-  controls.maxPolarAngle = Math.PI * 0.49
-  controls.minDistance = 1.5
-  controls.maxDistance = 4000
-  controls.zoomSpeed = 1.4
+  controls.dampingFactor = 0.08
+  controls.minPolarAngle = 0
+  controls.maxPolarAngle = Math.PI * 0.43
+  controls.minDistance = 7
+  controls.maxDistance = 3000
+  controls.zoomSpeed = 1.3
   controls.zoomToCursor = true
   controls.screenSpacePanning = false
-  // left orbit · middle-drag pan · right-drag pan · wheel zoom
-  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN }
-  renderer.domElement.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault() }) // no autoscroll
+  // strategy-game mouse: left-drag pans the map, right-drag orbits, wheel zooms
+  controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.ROTATE }
+  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }
+  renderer.domElement.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault() })
+  renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault())
 
-  // softer three-point rig: warm key, cool rim, sky/ground fill
-  const amb = new THREE.AmbientLight(0x6688aa, 0.7)
-  scene.add(amb)
-  const sun = new THREE.DirectionalLight(0xfff1dc, 1.25)
-  sun.position.set(80, 200, 120)
-  scene.add(sun)
-  const rimL = new THREE.DirectionalLight(0x4cc9ff, 0.55)
-  rimL.position.set(-140, 70, -180)
-  scene.add(rimL)
-  const hemi = new THREE.HemisphereLight(0x4cc9ff, 0x100818, 0.6)
+  // sky dome
+  const skyU = { uZenith: { value: new THREE.Color(SKY.day.zenith) }, uHorizon: { value: new THREE.Color(SKY.day.horizon) }, uGround: { value: new THREE.Color(SKY.day.ground) }, uNight: { value: 0 }, uTime: { value: 0 } }
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({ uniforms: skyU, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, fog: false }))
+  sky.frustumCulled = false
+  sky.renderOrder = -10
+  scene.add(sky)
+
+  const hemi = new THREE.HemisphereLight(SKY.day.hemiSky, SKY.day.hemiGround, 1.35)
   scene.add(hemi)
+  const sun = new THREE.DirectionalLight(SKY.day.sun, 3.1)
+  sun.castShadow = true
+  sun.shadow.mapSize.set(4096, 4096)
+  sun.shadow.bias = -0.00025
+  sun.shadow.normalBias = 0.35
+  sun.shadow.radius = 3
+  const SUN_DIR = new THREE.Vector3(-0.55, 0.78, 0.42).normalize() // warm sun from the upper left
+  scene.add(sun, sun.target)
 
-  const floorU = {
-    uTime: { value: 0 }, uScan: { value: -1 }, uExtent: { value: 300 }, uDoc: { value: 0 },
-    uTierR: { value: Array.from({ length: 8 }, () => new THREE.Vector2()) }, uTierC: { value: Array.from({ length: 8 }, () => new THREE.Color()) }, uTierN: { value: 0 },
-    uGlow: { value: Array.from({ length: 64 }, () => new THREE.Vector4()) }, uGlowC: { value: Array.from({ length: 64 }, () => new THREE.Color()) }, uGlowN: { value: 0 },
-    uZoneOp: { value: 0 }, uLineOp: { value: 0 },
-  }
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(40000, 40000),
-    new THREE.ShaderMaterial({ uniforms: floorU, vertexShader: FLOOR_VS, fragmentShader: FLOOR_FS, fog: false }),
-  )
-  floor.rotation.x = -Math.PI / 2
-  floor.position.y = -0.62 // below every slab bottom and well clear of the ground zones (no z-fighting)
-  scene.add(floor)
-
-  const starG = new THREE.BufferGeometry()
-  const sp = new Float32Array(3000 * 3)
-  for (let i = 0; i < 3000; i++) {
-    const u = Math.random() * 2 - 1, t = Math.random() * Math.PI * 2, r = 1800 + Math.random() * 1500
-    const s = Math.sqrt(1 - u * u)
-    sp[i * 3] = s * Math.cos(t) * r
-    sp[i * 3 + 1] = Math.abs(u) * r * 0.8 + 50
-    sp[i * 3 + 2] = s * Math.sin(t) * r
-  }
-  starG.setAttribute('position', new THREE.BufferAttribute(sp, 3))
-  const stars = new THREE.Points(starG, new THREE.PointsMaterial({ color: 0x9fd8ff, size: 2.2, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.7 }))
-  scene.add(stars)
-
-  // MSAA target: without it the composer renders aliased, and thin lines crawl when anything moves
-  const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 })
-  const composer = new EffectComposer(renderer, rt)
+  // post: AO → look (tilt-shift, vignette) → tone map → SMAA
+  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 0 }))
   composer.setPixelRatio(renderer.getPixelRatio())
-  composer.addPass(new RenderPass(scene, camera))
-  // guard: one NaN/Inf or huge additive pixel makes bloom smear black blocks on some GPUs — clean before bloom
-  const sanitize = new ShaderPass({
-    uniforms: { tDiffuse: { value: null } },
-    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
-    void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb;
-      if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
-      gl_FragColor = vec4(clamp(c, 0.0, 16.0), 1.0); }`,
-  })
-  composer.addPass(sanitize)
-  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.4, 0.62)
+  const renderPass = new RenderPass(scene, camera)
+  composer.addPass(renderPass)
+  const ao = new GTAOPass(scene, camera, innerWidth, innerHeight)
+  ao.output = GTAOPass.OUTPUT.Default
+  ao.blendIntensity = 0.85
+  ao.updateGtaoMaterial({ radius: 2.2, distanceExponent: 1.6, thickness: 1.5, scale: 1.0, samples: 12 })
+  ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 })
+  composer.addPass(ao)
+  // bloom only at night: lit windows, street lamps and headlights glow (GTA-at-night streaks)
+  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.0, 0.55, 0.82)
+  bloom.enabled = false
   composer.addPass(bloom)
+  const look = new ShaderPass(LOOK)
+  composer.addPass(look)
   composer.addPass(new OutputPass())
-  const fx = new ShaderPass(FX)
-  composer.addPass(fx)
+  const smaa = new SMAAPass(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio())
+  composer.addPass(smaa)
 
-  // camera tween
+  // ── camera tween ──
   let tween = null
   function flyTo(target, dist = 60, dur = 1.3, forceDir = null) {
     const t = new THREE.Vector3(...target)
     const dir = forceDir ? new THREE.Vector3(...forceDir) : camera.position.clone().sub(controls.target)
     if (dir.lengthSq() < 1e-6) dir.set(0, 1, 1)
     dir.normalize()
-    if (!forceDir && dir.y < 0.45) { dir.y = 0.45; dir.normalize() }
+    if (!forceDir && dir.y < 0.55) { dir.y = 0.55; dir.normalize() }
     tween = { t0: performance.now(), dur: dur * 1000, fromT: controls.target.clone(), toT: t, fromP: camera.position.clone(), toP: t.clone().add(dir.multiplyScalar(dist)) }
   }
-  // frame shift: slide the projection so "centre" means the gap between open panels, not the window middle
   let shift = 0, shiftTarget = 0
   const setFrameShift = (px) => { shiftTarget = px }
-  const PAPER = new THREE.Color('#ece6d8'), NIGHT = new THREE.Color(0x02050a)
-  let docOn = false
   let extent = 300
-  function setExtent(e) {
-    extent = e
-    controls.maxDistance = Math.max(1500, e * 9)
-  }
-  // whole network, straight down; fits the map's diameter into the vertical FOV
+  function setExtent(e) { extent = e; controls.maxDistance = Math.max(800, e * 4.2) }
   function topView(dur = 1.4) {
-    const fit = (extent * 1.15) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.min(1, camera.aspect)
+    const fit = (extent * 1.08) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.min(1, camera.aspect)
     flyTo([0, 0, 0], fit, dur, [0, 1, 0.0001])
   }
   let shakeAmt = 0
-  const shake = (a = 1) => { shakeAmt = Math.min(2, shakeAmt + a) }
-  let scanT = -1
-  const scan = () => { scanT = 0 }
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+  const shake = (a = 1) => { if (!calm) shakeAmt = Math.min(2, shakeAmt + a) }
+  const scan = () => {}
   let lastInput = performance.now()
-  // any click, scroll or key anywhere pauses the slow auto-rotation; it resumes after IDLE_MS of no input
-  const IDLE_MS = 60000
-  const pause = () => { lastInput = performance.now(); controls.autoRotate = false }
-  renderer.domElement.addEventListener('pointerdown', () => { tween = null })
-  renderer.domElement.addEventListener('wheel', () => { tween = null }, { passive: true })
-  for (const ev of ['pointerdown', 'wheel', 'keydown']) addEventListener(ev, pause, { capture: true, passive: true })
-  controls.autoRotateSpeed = 0.25
-  // WASD fly (shift = fast), Q/E orbit
+  const touch = () => { lastInput = performance.now(); tween = null; idleCam = null; if (follow) { follow = null; onFollowEnd?.() } }
+  let onFollowEnd = null
+  renderer.domElement.addEventListener('pointerdown', touch)
+  renderer.domElement.addEventListener('wheel', touch, { passive: true })
+  // WASD pan (shift = fast), Q/E orbit
   const keys = new Set()
   let fast = false
   addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey || !document.body.classList.contains('on') || document.body.classList.contains('admin') || document.body.classList.contains('setup')) return
     const k = e.key.toLowerCase()
     fast = e.shiftKey
+    if (k === 'd' && window.__hex?.view?.sel?.type === 'module') return // D = demolition preview on a selected building
     if (k.length === 1 && 'wasdqe'.includes(k)) keys.add(k)
   })
   addEventListener('keyup', (e) => { keys.delete(e.key.toLowerCase()); fast = e.shiftKey })
   addEventListener('blur', () => keys.clear())
   const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _mv = new THREE.Vector3(), _off = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0)
 
+  // follow mode (chopper cam): fn() → { pos, look } every frame; any input hands control back
+  let follow = null
+  const setFollow = (fn) => { follow = fn; tween = null }
+  // news-chopper idle camera: hands are off for a while → drift between points of interest
+  let idleCam = null
+  let poiFn = null
+  const setPoi = (fn) => { poiFn = fn }
+
+  let night = 0, nightTarget = 0
+  const setNight = (on) => { nightTarget = on ? 1 : 0 }
+  let docOn = false
+  const C1 = new THREE.Color(), C2 = new THREE.Color()
+  const mixc = (key, t) => C1.set(SKY.day[key]).lerp(C2.set(SKY.night[key]), t)
+  // bad weather greys the sky and dims the sun (0 = clear … 0.5 = storm)
+  let gloom = 0
+  const setGloom = (g) => { gloom = docOn ? 0 : g }
+  const GREY = new THREE.Color('#7f8c99'), GREY2 = new THREE.Color('#b9c2c9')
+  const uni = { uTime: { value: 0 }, uNight: { value: 0 }, uDoc: { value: 0 }, uLens: { value: 0 } } // shared with city materials
+
+  const maxPR = Math.min(devicePixelRatio, 2)
+  let pr = maxPR, frames = 0, acc = 0, work = 0, slow = 0
+  // adapt resolution to how long our own frames take (not to rAF rate, which throttles in background tabs)
+  function adapt(dt, ms) {
+    if (document.hidden) return
+    frames++; acc += dt; work += ms
+    if (acc < 1.5) return
+    const avg = work / frames
+    frames = 0; acc = 0; work = 0
+    slow = avg > 22 ? slow + 1 : avg < 9 ? slow - 1 : 0
+    let next = pr
+    if (slow >= 2) { next = Math.max(1, pr - 0.25); slow = 0 }
+    else if (slow <= -3) { next = Math.min(maxPR, pr + 0.25); slow = 0 }
+    if (next !== pr) {
+      pr = next
+      renderer.setPixelRatio(pr); composer.setPixelRatio(pr)
+      renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight)
+    }
+  }
+
   function tick(time, dt) {
+    const t0 = performance.now()
     if (tween) {
       const k = Math.min(1, (performance.now() - tween.t0) / tween.dur)
       const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
@@ -242,63 +224,100 @@ export function createWorld(container) {
       if (k >= 1) tween = null
     }
     if (keys.size) {
-      tween = null
-      controls.autoRotate = false
+      tween = null; idleCam = null
+      if (follow) { follow = null; onFollowEnd?.() }
       lastInput = performance.now()
       const dist = camera.position.distanceTo(controls.target)
-      // screen-up projected on the ground = forward, works tilted and straight down
       _fwd.set(0, 1, 0).applyQuaternion(camera.quaternion).setY(0)
       if (_fwd.lengthSq() < 1e-6) _fwd.subVectors(controls.target, camera.position).setY(0)
       _fwd.normalize()
       _right.set(1, 0, 0).applyQuaternion(camera.quaternion).setY(0).normalize()
       const f = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0), r = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0)
       if (f || r) {
-        _mv.copy(_fwd).multiplyScalar(f).addScaledVector(_right, r).normalize().multiplyScalar(Math.max(8, dist) * 0.9 * dt * (fast ? 3 : 1))
-        camera.position.add(_mv)
-        controls.target.add(_mv)
+        _mv.copy(_fwd).multiplyScalar(f).addScaledVector(_right, r).normalize().multiplyScalar(Math.max(8, dist) * 0.8 * dt * (fast ? 3 : 1))
+        camera.position.add(_mv); controls.target.add(_mv)
       }
       const q = (keys.has('q') ? 1 : 0) - (keys.has('e') ? 1 : 0)
-      if (q) {
-        _off.subVectors(camera.position, controls.target).applyAxisAngle(Y, q * dt * 1.6)
-        camera.position.copy(controls.target).add(_off)
-      }
+      if (q) { _off.subVectors(camera.position, controls.target).applyAxisAngle(Y, q * dt * 1.4); camera.position.copy(controls.target).add(_off) }
     }
-    if (performance.now() - lastInput > IDLE_MS && !tween) controls.autoRotate = true
+    // idle → chopper drifts to the next point of interest and slowly circles it
+    if (follow) {
+      const f = follow()
+      if (f) {
+        const k = Math.min(1, dt * 7)
+        camera.position.lerp(f.pos, k)
+        controls.target.lerp(f.look, k)
+      }
+    } else if (!calm && !tween && performance.now() - lastInput > 30000 && document.body.classList.contains('on') && poiFn) {
+      if (!idleCam || time > idleCam.until) {
+        const p = poiFn()
+        if (p) { flyTo(p.pos, p.dist || 70, 4); idleCam = { until: time + 16 } }
+        else idleCam = { until: time + 10 }
+      }
+      _off.subVectors(camera.position, controls.target).applyAxisAngle(Y, dt * 0.06)
+      camera.position.copy(controls.target).add(_off)
+    }
     controls.update()
+    // keep the camera above the ground
+    if (camera.position.y < 3) camera.position.y = 3
     if (Math.abs(shiftTarget - shift) > 0.3 || (shift !== 0 && !camera.view)) {
       shift += (shiftTarget - shift) * Math.min(1, dt * 6)
       if (Math.abs(shift) < 0.5 && Math.abs(shiftTarget) < 0.5) { shift = 0; camera.clearViewOffset() }
       else camera.setViewOffset(innerWidth, innerHeight, shift, 0, innerWidth, innerHeight)
     }
-    // distance-aware depth range + fog, so far zoom stays crisp and visible
     const dist = camera.position.distanceTo(controls.target)
-    const near = THREE.MathUtils.clamp(dist * 0.004, 0.05, 20)
-    const far = dist * 6 + 4000
+    const near = THREE.MathUtils.clamp(dist * 0.01, 0.3, 30)
+    const far = dist * 5 + 3000
     if (Math.abs(near - camera.near) / camera.near > 0.1 || Math.abs(far - camera.far) / camera.far > 0.1) {
-      camera.near = near
-      camera.far = far
-      camera.updateProjectionMatrix()
+      camera.near = near; camera.far = far; camera.updateProjectionMatrix()
     }
-    scene.fog.density = (docOn ? 0.08 : 0.3) / Math.max(60, dist)
-    stars.position.copy(camera.position)
+    sky.position.copy(camera.position)
+    sky.scale.setScalar(camera.far * 0.9)
+    // day / night
+    night += (nightTarget - night) * Math.min(1, dt * 1.2)
+    const n = docOn ? 0 : night
+    uni.uNight.value = n
+    uni.uTime.value = time
+    skyU.uZenith.value.copy(mixc('zenith', n)).lerp(GREY, gloom * (1 - n)); skyU.uHorizon.value.copy(mixc('horizon', n)).lerp(GREY2, gloom * 0.7 * (1 - n)); skyU.uGround.value.copy(mixc('ground', n))
+    skyU.uNight.value = n; skyU.uTime.value = time
+    hemi.color.copy(mixc('hemiSky', n)); hemi.groundColor.copy(mixc('hemiGround', n))
+    hemi.intensity = THREE.MathUtils.lerp(docOn ? 2.2 : 1.35, 0.95, n)
+    sun.color.copy(mixc('sun', n))
+    sun.intensity = THREE.MathUtils.lerp(docOn ? 1.2 : 3.1 * (1 - gloom * 0.55), 0.55, n)
+    bloom.enabled = n > 0.03
+    bloom.strength = n * 0.85
+    scene.fog.color.copy(mixc('fog', n))
+    renderer.setClearColor(scene.fog.color)
+    scene.fog.near = dist * 2.2 + 250
+    scene.fog.far = dist * 7 + 1500
+    // the sun's shadow box follows the camera target, sized to what's on screen, snapped to texels
+    const S = THREE.MathUtils.clamp(dist * 0.85, 30, 900)
+    const cam = sun.shadow.camera
+    if (Math.abs(cam.right - S) / S > 0.08) {
+      cam.left = -S; cam.right = S; cam.top = S; cam.bottom = -S
+      cam.near = 1; cam.far = S * 4 + 200
+      cam.updateProjectionMatrix()
+    }
+    const texel = (2 * S) / sun.shadow.mapSize.x
+    const tx = Math.round(controls.target.x / texel) * texel, tz = Math.round(controls.target.z / texel) * texel
+    sun.target.position.set(tx, 0, tz)
+    sun.position.set(tx, 0, tz).addScaledVector(SUN_DIR, S * 2 + 100)
+    // tilt-shift only when looking at the city from above at some distance
+    const pol = controls.getPolarAngle()
+    look.uniforms.uTilt.value = THREE.MathUtils.clamp((dist - 60) / 260, 0, 1) * THREE.MathUtils.clamp((pol - 0.25) / 0.5, 0, 1) * 0.9
+    look.uniforms.uNight.value = n
+    look.uniforms.uDoc.value = docOn ? 1 : 0
+    ao.enabled = dist < 520 && !docOn
     const off = new THREE.Vector3()
     if (shakeAmt > 0.001) {
-      off.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shakeAmt * 1.6)
+      off.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shakeAmt * Math.min(2.5, dist * 0.012))
       camera.position.add(off)
       shakeAmt *= Math.pow(0.02, dt)
     }
-    if (scanT >= 0) {
-      scanT += dt
-      floorU.uScan.value = scanT * 420
-      if (scanT > 4) { scanT = -1; floorU.uScan.value = -1 }
-    }
-    floorU.uTime.value = time
-    fx.uniforms.uTime.value = time
-    fx.uniforms.uShake.value = shakeAmt
-    stars.rotation.y = time * 0.004
     composer.render()
     labels.render(scene, camera)
     camera.position.sub(off)
+    adapt(dt, performance.now() - t0)
   }
 
   addEventListener('resize', () => {
@@ -307,21 +326,14 @@ export function createWorld(container) {
     camera.updateProjectionMatrix()
     renderer.setSize(innerWidth, innerHeight)
     composer.setSize(innerWidth, innerHeight)
+    ao.setSize(innerWidth, innerHeight)
+    bloom.setSize(innerWidth, innerHeight)
+    look.uniforms.uRes.value.set(innerWidth, innerHeight)
     labels.setSize(innerWidth, innerHeight)
   })
+  look.uniforms.uRes.value.set(innerWidth, innerHeight)
 
-  function setDoc(on) {
-    docOn = on
-    scene.background.copy(on ? PAPER : NIGHT)
-    scene.fog.color.copy(on ? PAPER : NIGHT)
-    floorU.uDoc.value = on ? 1 : 0
-    fx.uniforms.uDoc.value = on ? 1 : 0
-    bloom.enabled = !on
-    stars.visible = !on
-    amb.intensity = on ? 1.5 : 0.7
-    hemi.intensity = on ? 0.9 : 0.6
-    rimL.intensity = on ? 0.2 : 0.55
-  }
+  function setDoc(on) { docOn = on; uni.uDoc.value = on ? 1 : 0 }
 
-  return { renderer, scene, camera, controls, flyTo, topView, setExtent, setDoc, shake, scan, tick, floorU, bloom, composer, floor, stars, setFrameShift, fx, sanitize, rt }
+  return { setFollow, set onFollowEnd(f) { onFollowEnd = f }, get following() { return !!follow }, setGloom, sky, pixelRatio: () => pr, bloom, lastInput: () => lastInput, renderer, scene, camera, controls, flyTo, topView, setExtent, setDoc, setNight, shake, scan, tick, composer, setFrameShift, sun, hemi, ao, look, uni, setPoi, get night() { return night } }
 }

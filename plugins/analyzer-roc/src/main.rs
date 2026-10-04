@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use regex::Regex;
 use serde_json::{json, Map, Value};
+use sprawler_analyzer_kit::metrics;
 use sprawler_protocol::PROTOCOL;
 
 const BUILTIN: [&str; 19] =
@@ -348,6 +349,7 @@ fn analyze(req: &Value) -> Result<Value, String> {
             let name = if pkg.is_empty() || pkg == "." { "(root)".to_string() } else { basename(&pkg).to_string() };
             m["facts"] = json!({"package": name});
         }
+        m["metrics"] = metrics::file_metrics(text, "roc");
         modules.push(m);
     }
     for rel in &roc {

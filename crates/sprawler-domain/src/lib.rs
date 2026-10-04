@@ -5,6 +5,8 @@
 //! the core easy to test, and portable (e.g. to Roc) without redesign.
 
 pub mod classify;
+pub mod events;
 pub mod glob;
+pub mod health;
 pub mod inbox;
 pub mod judge;

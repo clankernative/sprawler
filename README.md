@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="Sprawler" width="96" align="right">
+
 # Sprawler
 
 [![ci](https://github.com/clankernative/sprawler/actions/workflows/ci.yml/badge.svg)](https://github.com/clankernative/sprawler/actions/workflows/ci.yml)
@@ -106,7 +108,8 @@ repo's CI publishes its own to a `badges` branch on every push to `main`.
 
 | Command | What it does |
 |---|---|
-| `serve` | Scan, serve the UI, rescan on file changes (`--port`, `--no-watch`) |
+| `serve` | Scan, serve the UI, rescan on file changes, commits, staging and checkouts (`--port`, `--no-watch`). Each rescan is compared with the last into events (`GET /api/events?since=<id>`) |
+| `demo` | Copy the committed files into a throwaway sandbox, serve it, and stage a day of work in a loop: new files, edits, deletions, a rule-breaking import, commits, fixes (`--pace`, `--port`). The real repo is never touched |
 | `check` | Score, what to fix first, and the next command (`--baseline`, `--format github`). Exit 1 on findings at or above `--fail-on` (default `major`; `none` to only report), `--min-score N`, or unhandled contract seams (`--json`) |
 | `report` | Score, contexts, seams, warnings (`--json`) |
 | `scan` | Write the atlas JSON (`-o`, schema `sprawler.atlas/1`) |

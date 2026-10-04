@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use serde_json::{json, Value};
+use sprawler_analyzer_kit::metrics;
 use sprawler_protocol::PROTOCOL;
 
 mod native;
@@ -387,6 +388,8 @@ fn analyze(req: &Value) -> Result<Value, String> {
             if let Some(facts) = crate_facts(f, &crates) {
                 m["facts"] = facts;
             }
+            let text = String::from_utf8_lossy(&std::fs::read(root.join(f)).unwrap_or_default()).replace("\r\n", "\n");
+            m["metrics"] = metrics::file_metrics(&text, "rs");
             m
         })
         .collect();

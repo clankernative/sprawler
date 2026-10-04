@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
+pub mod metrics;
+
 pub fn describe(name: &str, language: &str, extensions: &[&str], files: &[&str]) -> Value {
     json!({"protocol": sprawler_protocol::PROTOCOL, "name": name, "version": env!("CARGO_PKG_VERSION"),
         "languages": [language], "claims": {"extensions": extensions, "files": files},
@@ -106,7 +108,11 @@ pub fn module(rel: &str, language: &str, text: &str) -> Value {
         }
     }
     sample.sort_by_key(|x| x.0);
-    json!({"id":rel,"path":rel,"lang":language,"symbols":{"types":nt,"functions":nf,"methods":0},"sample":sample.iter().map(|(l,k,n)|json!([k,n,l])).collect::<Vec<_>>()})
+    let mut m = json!({"id":rel,"path":rel,"lang":language,"symbols":{"types":nt,"functions":nf,"methods":0},"sample":sample.iter().map(|(l,k,n)|json!([k,n,l])).collect::<Vec<_>>()});
+    if let Some(lang) = metrics::lang_of(rel) {
+        m["metrics"] = metrics::file_metrics(text, lang);
+    }
+    m
 }
 
 pub fn run(name: &str, descriptor: Value, analyze: fn(&Value) -> Result<Value, String>) -> std::process::ExitCode {
