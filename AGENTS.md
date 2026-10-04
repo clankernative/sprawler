@@ -118,7 +118,7 @@ sprawler plugin list
 
 - Sprawler follows `ddd-hexagonal` (see `sprawler.toml`). `crates/sprawler-domain` is pure: no
   filesystem, processes, network or clock. The atlas use case (`atlas.rs`, `views.rs`, `seams.rs`,
-  `prompts.rs`) depends only on `ports.rs` and the domain; `local.rs` implements the port.
+  `prompts.rs`, `wip.rs`, `metrics.rs`) depends only on `ports.rs` and the domain; `local.rs` implements the port.
 - `crates/sprawler-protocol` is the plugin contract. Plugins in `plugins/` depend only on it (and
   `plugins/analyzer-kit`).
 - `sprawler check . --fail-on minor` on this repo must pass. Don't loosen a rule to pass it.

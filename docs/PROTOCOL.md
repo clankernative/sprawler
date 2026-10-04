@@ -84,7 +84,9 @@ Response on stdout:
       "facts": { "project": "Api", "kind": "web", "role": "endpoint" },
       "evidence": ["derives from ControllerBase"],
       "generated": false,
-      "resolution": [812, 3]
+      "resolution": [812, 3],
+      "metrics": { "cc": 14, "ccMax": 6, "ccFn": "Create", "ccLine": 31, "fnMax": 24, "fnName": "Create",
+                   "fnLine": 31, "fns": 3, "nest": 4, "todo": 0, "comments": 0.08 }
     }
   ],
   "edges": [
@@ -108,11 +110,31 @@ Response on stdout:
 | `modules[].facts` | Values the profile may classify on. Never tiers or layers directly |
 | `modules[].evidence` | Short, human-readable reasons for the facts (shown in the UI) |
 | `modules[].resolution` | `[resolved, unresolved]` name lookups in this file, when the analyzer can tell |
+| `modules[].metrics` | Optional code-health facts for the file (below). Informational only: never part of the score |
 | `edges[]` | Module → module dependencies. `line` is the first occurrence in `source` |
 | `declared` | Dependencies declared by a build system (Cargo, `ProjectReference`), as module-id pairs |
 | `unknown` | What the analyzer could not see. Lowers confidence; never silently dropped |
 | `resolution` | Optional, for semantic analyzers: `{lang, resolved, unresolved, unrestored, projects, failed}` name lookups. Scales confidence by that language's share of files; reported under `score.evidence.<name>`. Don't also count these in `unknown` |
 | `warnings` | Shown in `report`, `check` and the UI |
+
+### `modules[].metrics`
+
+Optional, per file. Language-specific measurement belongs in the analyzer; the core adds git churn,
+authors and age, and judges smells against limits from the profile (`[smells]`, see CONFIG.md).
+
+| Key | Meaning |
+|---|---|
+| `cc` | Approximate cyclomatic complexity of the whole file: 1 + decision points (`if`, loops, match arms, `case`, `catch`, `&&`, `\|\|`, …) |
+| `ccMax`, `ccFn`, `ccLine` | The most complex function: its complexity, name and first line (`ccMax` = `cc` when there are no functions) |
+| `fnMax`, `fnName`, `fnLine` | The longest function: its length in lines, name and first line |
+| `fns` | Number of functions |
+| `nest` | Deepest indentation, in indent units (a tab or four spaces) |
+| `todo` | `TODO` / `FIXME` / `HACK` / `XXX` markers |
+| `comments` | Share of lines that are comments, 0..1 |
+
+Function boundaries should be real ones (brace matching, or indentation for Roc and Python), and
+keywords inside strings and comments must not count. Rust's `?` is not a branch; Roc's `->` is a type
+arrow. Rust plugins can use `sprawler_analyzer_kit::metrics::file_metrics(text, lang)`. Unknown keys are dropped.
 
 Only include files you actually analyzed. A file you claim but cannot parse should appear in
 `warnings`, not be dropped silently.

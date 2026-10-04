@@ -1,4 +1,4 @@
-//! Atlas assembly (adapter): scan → judge → history → seams → one `sprawler.atlas` JSON document.
+//! Atlas assembly (adapter): scan → judge → history → seams → construction → health → one `sprawler.atlas` JSON document.
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -6,7 +6,7 @@ use sprawler_domain::classify::Classifier;
 use sprawler_domain::judge::{judge, Graph, Policy};
 
 use crate::ports::{ModuleIndex, Obj, Workspace};
-use crate::{prompts, seams, views};
+use crate::{metrics, prompts, seams, views, wip};
 
 /// How many recent commits the history replay covers.
 const HISTORY_LIMIT: usize = 150;
@@ -17,8 +17,15 @@ fn strs(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
 }
 
-/// The use case: scan through the workspace port, judge, then attach history, seams, prompts and views.
+/// The use case: scan through the workspace port, judge, then attach history, seams, construction
+/// state, code health, prompts and views.
 pub fn build_atlas(p: &Obj, ws: &dyn Workspace) -> Result<Value, String> {
+    build_atlas_session(p, ws, None)
+}
+
+/// [`build_atlas`] for a long-running session (`sprawler serve`): `baseline` remembers the edge set
+/// first seen for each HEAD, so edges added while it runs count as uncommitted work (see `wip.rs`).
+pub fn build_atlas_session(p: &Obj, ws: &dyn Workspace, baseline: Option<&mut wip::Baseline>) -> Result<Value, String> {
     let t0 = Instant::now();
     let s = ws.scan(p)?;
     let graph: Graph = serde_json::from_value(s.graph.clone()).map_err(|e| format!("scan graph: {e}"))?;
@@ -74,6 +81,8 @@ pub fn build_atlas(p: &Obj, ws: &dyn Workspace) -> Result<Value, String> {
     atlas["stats"] = s.stats;
     atlas["analyzers"] = json!(s.analyzers);
     seams::attach_seams(p, ws, &mut atlas)?; // after judging: seams never change the score
+    wip::attach_wip(p, ws, &mut atlas, &cls, baseline); // after seams: tags their edges and findings too
+    metrics::attach_metrics(p, ws, &mut atlas); // informational: never part of the score
     prompts::attach_prompts(p, ws, &mut atlas);
     views::attach_views(p, ws, &mut atlas)?;
     atlas["inbox"] = json!(sprawler_domain::inbox::build_inbox(&atlas)); // one inbox for UI, CLI and agents

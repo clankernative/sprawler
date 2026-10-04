@@ -14,7 +14,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 record Request(string Root, string[] Files);
 record Sym(string Kind, string Name, int Line);
 record FileOut(string File, string Project, string Role, string[] Evidence, bool Generated,
-    int Types, int Functions, int Methods, Sym[] Sample, int Resolved, int Unresolved);
+    int Types, int Functions, int Methods, Sym[] Sample, int Resolved, int Unresolved, JsonObject? Metrics);
 record RefOut(string Source, string Target, int Line, int Weight, string[] Relations);
 record ProjOut(string Path, string Name, string Sdk, string Kind, bool Restored, bool Test,
     string[] References, string[] Analyzers, string[] Missing, int Files);
@@ -41,6 +41,7 @@ sealed class FileFacts
     public bool Generated;
     public int Types, Methods, Fns, Resolved, Unresolved;
     public List<Sym> Sample = new();
+    public JsonObject? Metrics;
 }
 
 static class Program
@@ -99,7 +100,8 @@ static class Protocol
         var kinds = r.Projects.ToDictionary(p => p.Name, p => p.Kind);
         var modules = new JsonArray();
         foreach (var f in r.Files)
-            modules.Add(new JsonObject
+        {
+            var m = new JsonObject
             {
                 ["id"] = f.File, ["path"] = f.File, ["lang"] = "cs",
                 ["symbols"] = new JsonObject { ["types"] = f.Types, ["functions"] = f.Functions, ["methods"] = f.Methods },
@@ -107,7 +109,10 @@ static class Protocol
                 ["facts"] = new JsonObject { ["role"] = f.Role, ["project"] = f.Project, ["kind"] = kinds.GetValueOrDefault(f.Project, "loose") },
                 ["evidence"] = Strs(f.Evidence), ["generated"] = f.Generated,
                 ["resolution"] = new JsonArray(f.Resolved, f.Unresolved),
-            });
+            };
+            if (f.Metrics is not null) m["metrics"] = f.Metrics;
+            modules.Add(m);
+        }
         foreach (var p in r.Projects)
             modules.Add(new JsonObject
             {
@@ -343,7 +348,7 @@ sealed class Scanner
         }
         if (role == "migration") f.Generated = true;
         return new FileOut(f.Rel, f.Proj.Name, role, why, f.Generated, f.Types, f.Fns, f.Methods,
-            f.Sample.OrderBy(s => s.Line).Take(60).ToArray(), f.Resolved, f.Unresolved);
+            f.Sample.OrderBy(s => s.Line).Take(60).ToArray(), f.Resolved, f.Unresolved, f.Metrics);
     }
 
     // ── project loading ─────────────────────────────────────────────────────
@@ -524,6 +529,7 @@ sealed class Scanner
         if (file is "Program.cs" or "Startup.cs" || rootNode.Members.OfType<GlobalStatementSyntax>().Any())
             f.Cand.Add(("composition", file == "Startup.cs" ? "Startup class" : "application entry point"));
 
+        f.Metrics = Health.Measure(tree);
         bool mapsRoutes = false;
         foreach (var n in rootNode.DescendantNodes())
         {
@@ -728,5 +734,76 @@ sealed class Scanner
             }
         }
         return "references";
+    }
+}
+
+/// Per-file code-health facts (`modules[].metrics`): functions from the syntax tree, an approximate
+/// cyclomatic complexity (1 + decision points), deepest indentation, TODO markers and comment density.
+/// Facts only; the smell limits are policy and live in the core.
+static class Health
+{
+    static readonly Regex Todo = new(@"\b(TODO|FIXME|HACK|XXX)\b");
+
+    static bool Decision(SyntaxNode n) => n switch
+    {
+        IfStatementSyntax or WhileStatementSyntax or DoStatementSyntax or ForStatementSyntax or CommonForEachStatementSyntax => true,
+        CaseSwitchLabelSyntax or CasePatternSwitchLabelSyntax or SwitchExpressionArmSyntax or CatchClauseSyntax => true,
+        ConditionalExpressionSyntax or ConditionalAccessExpressionSyntax => true,
+        BinaryExpressionSyntax b => b.Kind() is SyntaxKind.LogicalAndExpression or SyntaxKind.LogicalOrExpression or SyntaxKind.CoalesceExpression,
+        AssignmentExpressionSyntax a => a.Kind() is SyntaxKind.CoalesceAssignmentExpression,
+        _ => false,
+    };
+
+    static (string Name, SyntaxNode Body)? Function(SyntaxNode n) => n switch
+    {
+        MethodDeclarationSyntax m when m.Body is not null || m.ExpressionBody is not null => (m.Identifier.Text, m),
+        ConstructorDeclarationSyntax c when c.Body is not null || c.ExpressionBody is not null => (c.Identifier.Text, c),
+        DestructorDeclarationSyntax d => ("~" + d.Identifier.Text, d),
+        OperatorDeclarationSyntax o => ("operator " + o.OperatorToken.Text, o),
+        LocalFunctionStatementSyntax l => (l.Identifier.Text, l),
+        AccessorDeclarationSyntax a when a.Body is not null || a.ExpressionBody is not null
+            => ((a.Parent?.Parent as BasePropertyDeclarationSyntax) switch { PropertyDeclarationSyntax p => p.Identifier.Text, _ => "this" } + "." + a.Keyword.Text, a),
+        PropertyDeclarationSyntax p when p.ExpressionBody is not null => (p.Identifier.Text, p),
+        _ => null,
+    };
+
+    public static JsonObject Measure(SyntaxTree tree)
+    {
+        var root = tree.GetRoot();
+        var text = tree.GetText().ToString().Replace("\r\n", "\n");
+        var fns = new List<(string Name, int Line, int Len, int Cc)>();
+        foreach (var n in root.DescendantNodes())
+        {
+            if (Function(n) is not { } f) continue;
+            var span = n.GetLocation().GetLineSpan();
+            var cc = 1 + n.DescendantNodes().Count(Decision);
+            fns.Add((f.Name, span.StartLinePosition.Line + 1, span.EndLinePosition.Line - span.StartLinePosition.Line + 1, cc));
+        }
+        var total = 1 + root.DescendantNodes().Count(Decision);
+        var lines = text.Split('\n');
+        var nest = 0;
+        foreach (var l in lines)
+        {
+            if (l.Trim().Length == 0) continue;
+            var lead = l[..(l.Length - l.TrimStart().Length)];
+            var tabs = lead.Count(c => c == '\t');
+            nest = Math.Max(nest, tabs + (lead.Length - tabs) / 4);
+        }
+        // first maximum wins
+        (string Name, int Line, int Len, int Cc)? wl = null, wc = null;
+        foreach (var f in fns)
+        {
+            if (wl is null || f.Len > wl.Value.Len) wl = f;
+            if (wc is null || f.Cc > wc.Value.Cc) wc = f;
+        }
+        var comments = lines.Count(l => l.TrimStart().StartsWith("//"));
+        return new JsonObject
+        {
+            ["cc"] = total,
+            ["ccMax"] = wc?.Cc ?? total, ["ccFn"] = wc?.Name, ["ccLine"] = wc?.Line,
+            ["fnMax"] = wl?.Len ?? 0, ["fnName"] = wl?.Name, ["fnLine"] = wl?.Line,
+            ["fns"] = fns.Count, ["nest"] = nest, ["todo"] = Todo.Matches(text).Count,
+            ["comments"] = Math.Round((double)comments / Math.Max(1, lines.Length), 3),
+        };
     }
 }

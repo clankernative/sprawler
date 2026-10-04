@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 use sprawler_domain::classify::{ctx_label, Classifier, Facts};
-use sprawler_protocol::PROTOCOL;
+use sprawler_protocol::{METRICS, PROTOCOL};
 
 use crate::plugins::{self, Plugin};
 use crate::profile::{self, resolve_path, Obj};
@@ -174,6 +174,11 @@ pub fn scan(p: &Obj) -> Result<Scan, String> {
                     if let Some(v) = m.get(k) {
                         t.insert(k.into(), v.clone());
                     }
+                }
+                // code-health facts: only the keys the protocol defines
+                if let Some(met) = m.get("metrics").and_then(Value::as_object) {
+                    let kept: Map<String, Value> = met.iter().filter(|(k, _)| METRICS.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
+                    t.insert("metrics".into(), Value::Object(kept));
                 }
                 if let Some(g) = m.get("generated").and_then(Value::as_bool) {
                     t.insert("generated".into(), json!(g));

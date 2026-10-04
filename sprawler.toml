@@ -4,7 +4,7 @@
 #   domain    crates/sprawler-domain — pure: facts + policy in, findings out
 #   protocol  crates/sprawler-protocol — the contract every analyzer speaks; plugins/analyzer-kit —
 #             shared helpers for writing analyzers (knows the protocol, never a specific plugin)
-#   adapters  crates/sprawler — driving (cli, serve) → app (atlas) → driven (files, git, plugins)
+#   adapters  crates/sprawler — driving (cli, serve, demo) → app (atlas, wip, metrics) → driven (files, git, plugins)
 #   plugins   plugins/* — facts from code; may use the protocol and nothing else
 #   ui        web/src — talks to the server over /api only (a seam, not an import)
 extends = ["ddd-hexagonal"]
@@ -186,6 +186,21 @@ glob = "crates/sprawler/src/prompts.rs"
 tier = "adapters"
 ctx = "sprawler"
 layer = "application"
+[[map]]
+glob = "crates/sprawler/src/wip.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/metrics.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "application"
+[[map]]
+glob = "crates/sprawler/src/demo.rs"
+tier = "adapters"
+ctx = "sprawler"
+layer = "driving"
 [[map]]
 glob = "crates/sprawler/src/local.rs"
 tier = "adapters"

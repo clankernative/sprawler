@@ -7,7 +7,7 @@ use std::process::{Command, ExitCode};
 use clap::{Args, Parser, Subcommand};
 use serde_json::{json, Value};
 
-use crate::{atlas, discover, local, plugins, profile, serve};
+use crate::{atlas, demo, discover, local, plugins, profile, serve};
 
 #[derive(Parser)]
 #[command(
@@ -103,6 +103,16 @@ enum Cmd {
         port: u16,
         #[arg(long)]
         no_watch: bool,
+    },
+    /// Self-running demo: copy the committed files to a sandbox, serve it, and stage a day of work in a loop (the real repo is never touched)
+    Demo {
+        #[command(flatten)]
+        t: Target,
+        #[arg(long, default_value_t = 8766)]
+        port: u16,
+        /// Slow the staged day down (>1) or speed it up (<1)
+        #[arg(long, default_value_t = 1.0)]
+        pace: f64,
     },
     /// Show what auto-discovery finds in a folder (platform, apps, instances, tests, .NET projects)
     Discover {
@@ -1618,6 +1628,7 @@ pub fn run() -> ExitCode {
             0
         }),
         Cmd::Serve { t, port, no_watch } => serve_target(&t).and_then(|(p, root)| serve::serve(p, &root, port, !no_watch)).map(|_| 0),
+        Cmd::Demo { t, port, pace } => resolve(&t).and_then(|p| demo::run_demo(&p, port, pace)).map(|_| 0),
         Cmd::Discover { dir, json } => Ok(setup(&dir, false, false, json, true)),
         Cmd::Setup { dir, yes, shared, json } => Ok(setup(&dir, yes, shared, json, false)),
         Cmd::Doctor { json } => Ok(doctor(json)),
